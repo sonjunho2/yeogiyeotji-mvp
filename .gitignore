@@ -1,0 +1,28 @@
+# Node / Expo
+node_modules/
+.expo/
+dist/
+build/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local app data and uploads
+server/data/*.json
+!server/data/.gitkeep
+uploads/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Windows / macOS / editors
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+
+# Generated native project
+apps/native-source/yeogiyeotji-app/
