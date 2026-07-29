@@ -1,0 +1,9 @@
+{
+  "name":"여기였지 - 나만의 장소 지도",
+  "short_name":"여기였지",
+  "start_url":"./",
+  "display":"standalone",
+  "background_color":"#f6f8f7",
+  "theme_color":"#1f6a5b",
+  "description":"사진과 위치로 좋은 장소를 기억하고 컬렉션으로 공유하는 앱"
+}
