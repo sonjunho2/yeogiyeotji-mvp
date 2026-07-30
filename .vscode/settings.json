@@ -1,0 +1,6 @@
+{
+  "livePreview.useIntegratedBrowser": true,
+  "workbench.browser.openLocalhostLinks": true,
+  "workbench.browser.dataStorage": "workspace",
+  "workbench.editor.openSideBySideDirection": "right"
+}

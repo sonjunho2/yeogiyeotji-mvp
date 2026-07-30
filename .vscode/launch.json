@@ -1,0 +1,24 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "여기였지: 통합 브라우저 열기",
+      "type": "editor-browser",
+      "request": "launch",
+      "url": "http://localhost:4100"
+    },
+    {
+      "name": "여기였지: 서버 + 통합 브라우저",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/server/server.js",
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "serverReadyAction": {
+        "pattern": "http://localhost:([0-9]+)",
+        "action": "startDebugging",
+        "name": "여기였지: 통합 브라우저 열기"
+      }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "여기였지: 개발 서버 실행",
+      "type": "npm",
+      "script": "start",
+      "path": "${workspaceFolder}",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      }
+    },
+    {
+      "label": "여기였지: API 테스트",
+      "type": "npm",
+      "script": "test",
+      "path": "${workspaceFolder}",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      }
+    }
+  ]
+}
