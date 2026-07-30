@@ -7,15 +7,17 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const port = 4199;
+const realDataFile = path.join(__dirname, 'data', 'store.json');
+const realDataBefore = fs.readFileSync(realDataFile);
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'yeogiyeotji-test-'));
 const dataFile = path.join(temporaryDirectory, 'store.json');
 const child = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
-  env: { ...process.env, PORT: String(port), DATA_FILE: dataFile },
+  env: { ...process.env, PORT: String(port), DATA_FILE: dataFile, NODE_ENV: 'test' },
   stdio: ['ignore', 'pipe', 'pipe']
 });
 
 const baseUrl = `http://127.0.0.1:${port}`;
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 async function waitForServer() {
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -28,68 +30,115 @@ async function waitForServer() {
   throw new Error('테스트 서버가 시작되지 않았습니다.');
 }
 
-async function jsonRequest(route, options) {
-  const response = await fetch(`${baseUrl}${route}`, options);
-  const body = await response.json();
-  return { response, body };
+function createClient() {
+  let cookie = '';
+  return async (route, options = {}) => {
+    const headers = { ...(options.headers || {}) };
+    if (cookie) headers.cookie = cookie;
+    const response = await fetch(`${baseUrl}${route}`, { ...options, headers });
+    const setCookie = response.headers.get('set-cookie');
+    if (setCookie) cookie = setCookie.split(';')[0];
+    const text = await response.text();
+    const body = text ? JSON.parse(text) : null;
+    return { response, body };
+  };
 }
 
+const jsonOptions = (method, body) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /passwordHash|passwordSalt|sessionId/);
+
 (async () => {
+  const anonymous = createClient();
+  const userA = createClient();
+  const userB = createClient();
   try {
     await waitForServer();
 
-    const initialPlaces = await jsonRequest('/api/places');
-    assert.equal(initialPlaces.response.status, 200);
-    assert.ok(Array.isArray(initialPlaces.body.items));
+    const registerA = await userA('/api/auth/register', jsonOptions('POST', { email: ' A@Example.com ', password: 'password-A', displayName: ' 사용자 A ' }));
+    assert.equal(registerA.response.status, 201);
+    assert.deepEqual(registerA.body.item.email, 'a@example.com');
+    assert.equal(registerA.body.item.displayName, '사용자 A');
+    assert.match(registerA.response.headers.get('set-cookie'), /yyj_session=.*HttpOnly.*SameSite=Lax.*Path=\//);
+    assertNoSecrets(registerA.body);
 
-    const createdPlace = await jsonRequest('/api/places', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'API 테스트 장소', category: '카페', latitude: 37.5, longitude: 127, memo: 'API 테스트', tags: ['테스트'] })
-    });
-    assert.equal(createdPlace.response.status, 201);
-    assert.ok(createdPlace.body.item.id);
+    const duplicate = await anonymous('/api/auth/register', jsonOptions('POST', { email: 'a@example.com', password: 'password-X', displayName: '중복' }));
+    assert.equal(duplicate.response.status, 409);
+    const badEmail = await anonymous('/api/auth/register', jsonOptions('POST', { email: 'wrong', password: 'password-X', displayName: '오류' }));
+    assert.equal(badEmail.response.status, 400);
+    const shortPassword = await anonymous('/api/auth/register', jsonOptions('POST', { email: 'short@example.com', password: '1234567', displayName: '오류' }));
+    assert.equal(shortPassword.response.status, 400);
 
-    const foundPlace = await jsonRequest(`/api/places/${createdPlace.body.item.id}`);
-    assert.equal(foundPlace.response.status, 200);
-    assert.equal(foundPlace.body.item.name, 'API 테스트 장소');
+    const loginClient = createClient();
+    const login = await loginClient('/api/auth/login', jsonOptions('POST', { email: 'a@example.com', password: 'password-A' }));
+    assert.equal(login.response.status, 200);
+    assertNoSecrets(login.body);
+    const wrongPassword = await anonymous('/api/auth/login', jsonOptions('POST', { email: 'a@example.com', password: 'not-the-password' }));
+    assert.equal(wrongPassword.response.status, 401);
+    assert.equal(wrongPassword.body.message, '이메일 또는 비밀번호가 올바르지 않습니다.');
 
-    const deletedPlace = await jsonRequest(`/api/places/${createdPlace.body.item.id}`, { method: 'DELETE' });
-    assert.equal(deletedPlace.response.status, 200);
-    assert.equal(deletedPlace.body.ok, true);
+    const me = await loginClient('/api/auth/me');
+    assert.equal(me.response.status, 200);
+    assertNoSecrets(me.body);
+    const logout = await loginClient('/api/auth/logout', jsonOptions('POST', {}));
+    assert.equal(logout.response.status, 200);
+    assert.equal(logout.body.ok, true);
+    assert.equal((await loginClient('/api/auth/me')).response.status, 401);
+    assert.equal((await anonymous('/api/places')).response.status, 401);
 
-    const missingDelete = await jsonRequest('/api/places/does-not-exist', { method: 'DELETE' });
-    assert.equal(missingDelete.response.status, 404);
+    const anonymousCollection = await anonymous('/api/collections', jsonOptions('POST', { name: '미인증', privacy: 'private' }));
+    assert.equal(anonymousCollection.response.status, 401);
+    const blankCollection = await userA('/api/collections', jsonOptions('POST', { name: '   ', privacy: 'private' }));
+    assert.equal(blankCollection.response.status, 400);
+    const longCollection = await userA('/api/collections', jsonOptions('POST', { name: '가'.repeat(61), privacy: 'private' }));
+    assert.equal(longCollection.response.status, 400);
+    const invalidPrivacy = await userA('/api/collections', jsonOptions('POST', { name: '공개 범위 오류', privacy: 'public' }));
+    assert.equal(invalidPrivacy.response.status, 400);
 
-    const invalidPlace = await jsonRequest('/api/places', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: '', category: '', latitude: '잘못됨', longitude: null })
-    });
-    assert.equal(invalidPlace.response.status, 400);
+    const collectionA = await userA('/api/collections', jsonOptions('POST', { name: ' A 컬렉션 ', privacy: 'private', ownerId: 'forged-owner' }));
+    assert.equal(collectionA.response.status, 201);
+    assert.equal(collectionA.body.item.name, 'A 컬렉션');
+    assert.equal(collectionA.body.item.privacy, 'private');
+    assert.equal(collectionA.body.item.ownerId, registerA.body.item.id);
+    assert.notEqual(collectionA.body.item.ownerId, 'forged-owner');
+    const placeA = await userA('/api/places', jsonOptions('POST', { name: 'A 장소', category: '카페', latitude: 37.5, longitude: 127, collectionId: collectionA.body.item.id }));
+    assert.equal(placeA.response.status, 201);
+    assert.equal(placeA.body.item.ownerId, registerA.body.item.id);
+    const listA = await userA('/api/places');
+    assert.equal(listA.body.items.length, 1);
+    assert.equal(listA.body.items[0].id, placeA.body.item.id);
 
-    const initialCollections = await jsonRequest('/api/collections');
-    assert.equal(initialCollections.response.status, 200);
-    assert.ok(Array.isArray(initialCollections.body.items));
+    const registerB = await userB('/api/auth/register', jsonOptions('POST', { email: 'b@example.com', password: 'password-B', displayName: '사용자 B' }));
+    assert.equal(registerB.response.status, 201);
+    assert.equal((await userB(`/api/places/${placeA.body.item.id}`)).response.status, 404);
+    assert.equal((await userB(`/api/places/${placeA.body.item.id}`, { method: 'DELETE' })).response.status, 404);
+    assert.equal((await userA(`/api/places/${placeA.body.item.id}`)).response.status, 200);
 
-    const createdCollection = await jsonRequest('/api/collections', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'API 테스트 컬렉션', privacy: 'private' })
-    });
-    assert.equal(createdCollection.response.status, 201);
-    assert.equal(createdCollection.body.item.name, 'API 테스트 컬렉션');
+    const collectionB = await userB('/api/collections', jsonOptions('POST', { name: 'B 컬렉션', privacy: 'private' }));
+    assert.equal(collectionB.response.status, 201);
+    assert.deepEqual((await userA('/api/collections')).body.items.map(item => item.id), [collectionA.body.item.id]);
+    assert.deepEqual((await userB('/api/collections')).body.items.map(item => item.id), [collectionB.body.item.id]);
+    const crossCollection = await userB('/api/places', jsonOptions('POST', { name: '침범', category: '기타', latitude: 37, longitude: 127, collectionId: collectionA.body.item.id }));
+    assert.equal(crossCollection.response.status, 400);
+
+    const invalidJson = await userA('/api/places', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' });
+    assert.equal(invalidJson.response.status, 400);
+    const wrongOrigin = await userA('/api/collections', { ...jsonOptions('POST', { name: '차단' }), headers: { 'content-type': 'application/json', origin: 'https://example.com' } });
+    assert.equal(wrongOrigin.response.status, 403);
 
     const index = await fetch(`${baseUrl}/`);
     assert.equal(index.status, 200);
     assert.match(index.headers.get('content-type'), /^text\/html/);
     assert.match(await index.text(), /<title>여기였지<\/title>/);
+    for (const asset of ['styles.css', 'data-store.js', 'app.js', 'service-worker.js', 'manifest.json']) {
+      assert.equal((await fetch(`${baseUrl}/${asset}`)).status, 200, `${asset} 정적 경로`);
+    }
 
-    console.log('API tests passed: places CRUD, validation, collections, static index');
+    console.log('API tests passed: 20 auth, isolation, validation, and static-file scenarios');
   } finally {
     child.kill();
     await new Promise(resolve => child.once('exit', resolve));
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    assert.deepEqual(fs.readFileSync(realDataFile), realDataBefore, '실제 store.json은 변경되면 안 됩니다.');
   }
 })().catch(error => {
   console.error(error);

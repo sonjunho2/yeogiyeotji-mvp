@@ -1,9 +1,18 @@
 {
+  "schemaVersion": 2,
   "users": [
     {
       "id": "demo-user",
       "name": "준호",
       "email": "demo@example.com"
+    },
+    {
+      "id": "367c1dcf-242b-4c55-b338-47116520e87e",
+      "email": "test@te.te",
+      "displayName": "테스트",
+      "passwordSalt": "c802b44ea559be5fe572e917f651e96c",
+      "passwordHash": "2feca09036c45c23e4bfaa0b5b19e9e519dbbcf403a1e93a38246dc4481d3629e011b3661133031ab351f68820a71ea707d33dadcad9c6c6402737c1be5e4081",
+      "createdAt": "2026-07-30T05:28:57.560Z"
     }
   ],
   "collections": [
@@ -27,9 +36,34 @@
       "name": "사고 싶은 물건 판매처",
       "privacy": "private",
       "shareToken": null
+    },
+    {
+      "id": "daae6ddb-ff98-48fc-a81a-5f0fd4156cb2",
+      "ownerId": "367c1dcf-242b-4c55-b338-47116520e87e",
+      "name": "내장소",
+      "privacy": "private",
+      "shareToken": null,
+      "createdAt": "2026-07-30T05:29:14.170Z"
     }
   ],
   "places": [
+    {
+      "id": "1178b608-0b32-4521-82de-4e09b6551b00",
+      "ownerId": "367c1dcf-242b-4c55-b338-47116520e87e",
+      "name": "테사트",
+      "category": "기타",
+      "memo": "ㄴㅇㄹㄴㅇㄹ",
+      "tags": [
+        "ㄴㅇㄹㄴㄹ"
+      ],
+      "visitedAt": "2026-07-30",
+      "latitude": 35.171,
+      "longitude": 126.9366,
+      "collectionId": "daae6ddb-ff98-48fc-a81a-5f0fd4156cb2",
+      "privacy": "private",
+      "imageUrl": null,
+      "createdAt": "2026-07-30T05:29:36.809Z"
+    },
     {
       "id": "p1",
       "userId": "demo-user",

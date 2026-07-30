@@ -8,6 +8,15 @@
   let mode = 'browser';
   let fallback = false;
 
+  class AuthenticationError extends Error {
+    constructor(message, payload) {
+      super(message);
+      this.name = 'AuthenticationError';
+      this.status = 401;
+      this.payload = payload;
+    }
+  }
+
   const isLocalServerOrigin = () => location.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(location.hostname);
 
   function readLocal(key, fallbackValue) {
@@ -68,13 +77,14 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     try {
-      const response = await fetch(path, { ...options, signal: controller.signal, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
+      const response = await fetch(path, { ...options, credentials: 'same-origin', signal: controller.signal, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
       const raw = await response.text();
       if (!raw) throw new Error('서버가 빈 응답을 보냈습니다.');
       let payload;
       try { payload = JSON.parse(raw); } catch (error) { throw new Error('서버 응답 형식이 올바르지 않습니다.'); }
       if (!response.ok) {
-        const error = new Error(response.status === 404 ? '요청한 데이터를 찾을 수 없습니다.' : response.status >= 500 ? '서버에서 오류가 발생했습니다.' : '입력값을 확인해 주세요.');
+        if (response.status === 401) throw new AuthenticationError(payload.message || '로그인이 필요합니다.', payload);
+        const error = new Error(payload.message || (response.status === 404 ? '요청한 데이터를 찾을 수 없습니다.' : response.status >= 500 ? '서버에서 오류가 발생했습니다.' : '입력값을 확인해 주세요.'));
         error.status = response.status;
         error.payload = payload;
         throw error;
@@ -100,8 +110,14 @@
         if (!await checkServer()) throw new Error('서버 상태를 확인할 수 없습니다.');
         mode = 'server';
         fallback = false;
-        const [places, collections] = await Promise.all([listPlaces(), listCollections()]);
-        return { places, collections, mode, fallback };
+        try {
+          const user = await getCurrentUser();
+          const [places, collections] = await Promise.all([listPlaces(), listCollections()]);
+          return { places, collections, user, mode, fallback, authRequired: false };
+        } catch (error) {
+          if (error instanceof AuthenticationError) return { places: [], collections: [], user: null, mode, fallback, authRequired: true };
+          throw error;
+        }
       } catch (error) {
         console.error('서버 연결 실패, 브라우저 저장으로 전환합니다.', error);
         mode = 'browser';
@@ -118,6 +134,27 @@
       mode,
       fallback
     };
+  }
+
+  async function register(credentials) {
+    return (await request('/api/auth/register', { method: 'POST', body: JSON.stringify(credentials) })).item;
+  }
+
+  async function login(credentials) {
+    return (await request('/api/auth/login', { method: 'POST', body: JSON.stringify(credentials) })).item;
+  }
+
+  async function logout() {
+    return request('/api/auth/logout', { method: 'POST', body: '{}' });
+  }
+
+  async function getCurrentUser() {
+    return (await request('/api/auth/me')).item;
+  }
+
+  async function loadServerData() {
+    const [places, collections] = await Promise.all([listPlaces(), listCollections()]);
+    return { places, collections };
   }
 
   async function listPlaces() {
@@ -162,8 +199,9 @@
   }
 
   async function createCollection(collection) {
-    if (mode === 'server') return normalizeCollection((await request('/api/collections', { method: 'POST', body: JSON.stringify(collection) })).item);
-    const created = normalizeCollection({ ...collection, id: collection.id || `c${Date.now()}` });
+    const payload = { name: collection.name, privacy: collection.privacy };
+    if (mode === 'server') return normalizeCollection((await request('/api/collections', { method: 'POST', body: JSON.stringify(payload) })).item);
+    const created = normalizeCollection({ ...payload, id: collection.id || `c${Date.now()}` });
     const collections = readLocal(COLLECTION_KEY, []);
     collections.push(created);
     writeLocal(COLLECTION_KEY, collections);
@@ -175,5 +213,5 @@
     return mode === 'server' ? '서버에 저장 중' : '이 브라우저에 저장 중';
   }
 
-  window.YYJDataStore = { initialize, listPlaces, createPlace, deletePlace, listCollections, createCollection, checkServer, statusText, getMode: () => mode };
+  window.YYJDataStore = { initialize, register, login, logout, getCurrentUser, loadServerData, listPlaces, createPlace, deletePlace, listCollections, createCollection, checkServer, statusText, AuthenticationError, getMode: () => mode, isFallback: () => fallback };
 })();

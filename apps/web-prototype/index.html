@@ -38,6 +38,16 @@
 
   <dialog id="detailDialog" class="dialog"></dialog>
   <dialog id="settingsDialog" class="dialog compact"></dialog>
+  <dialog id="collectionDialog" class="dialog compact">
+    <form id="collectionForm">
+      <h2>새 컬렉션</h2>
+      <p class="meta">장소를 모아 볼 컬렉션을 만드세요.</p>
+      <label class="field"><span>컬렉션 이름</span><input id="collectionName" maxlength="60" autocomplete="off" required /></label>
+      <fieldset class="privacy collection-privacy"><legend>공개 범위</legend><label><input name="collectionPrivacy" type="radio" value="private" checked /> 🔒 나만 보기</label><label><input name="collectionPrivacy" type="radio" value="link" /> 🔗 링크 공유</label></fieldset>
+      <p id="collectionError" class="form-error" role="alert"></p>
+      <div class="dialog-form-actions"><button class="secondary" id="cancelCollectionButton" type="button">취소</button><button class="primary" id="createCollectionButton" type="submit">만들기</button></div>
+    </form>
+  </dialog>
 
   <template id="mapViewTemplate">
     <section class="map-view">
@@ -90,7 +100,7 @@
   </template>
 
   <template id="collectionsViewTemplate">
-    <section><div class="section-heading"><p>장소를 주제별로 정리하세요</p><button id="newCollectionButton" class="icon-button primary-icon">＋</button></div><div id="collectionList" class="collection-list"></div></section>
+    <section><div class="section-heading"><p>장소를 주제별로 정리하세요</p><button id="newCollectionButton" class="icon-button primary-icon" type="button" aria-label="새 컬렉션 만들기">＋</button></div><div id="collectionList" class="collection-list"></div></section>
   </template>
 
   <script
