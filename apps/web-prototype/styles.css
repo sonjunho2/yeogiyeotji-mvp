@@ -21,6 +21,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .app-header { height: 104px; padding: 24px 20px 12px; display: flex; align-items: flex-end; justify-content: space-between; background: var(--bg); position: sticky; top: 0; z-index: 1000; }
 .eyebrow { margin: 0 0 3px; color: var(--muted); font-size: 12px; }
 .app-header h1 { margin: 0; font-size: 25px; }
+.storage-status { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
 .icon-button { border: 0; width: 42px; height: 42px; border-radius: 14px; background: var(--surface); color: var(--text); box-shadow: 0 4px 14px rgba(25, 65, 55, .08); cursor: pointer; }
 .primary-icon { background: var(--primary); color: #fff; }
 .view { padding: 0 18px 22px; }
@@ -110,6 +111,9 @@ button { -webkit-tap-highlight-color: transparent; }
 .settings-list { display: grid; gap: 10px; }
 .settings-list button { border: 1px solid var(--line); background: var(--surface); padding: 13px; border-radius: 13px; text-align: left; }
 .empty { padding: 50px 20px; text-align: center; color: var(--muted); }
+.loading { min-height: 55dvh; display: grid; place-items: center; color: var(--muted); text-align: center; }
+.storage-note { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--soft); color: var(--muted); font-size: 11px; }
+.primary:disabled, .secondary:disabled, .danger:disabled { opacity: .55; cursor: wait; }
 .toast { position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); background: var(--primary-dark); color: #fff; padding: 12px 18px; border-radius: 999px; z-index: 2000; box-shadow: var(--shadow); animation: fade 2.4s both; white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis; }
 
 @keyframes fade {
