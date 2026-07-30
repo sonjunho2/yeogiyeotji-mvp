@@ -14,26 +14,24 @@ const seedCollections = [
 
 const state = {
   tab: 'map',
-  places: JSON.parse(localStorage.getItem('yyj_places') || 'null') || seedPlaces,
-  collections: JSON.parse(localStorage.getItem('yyj_collections') || 'null') || seedCollections,
-  selectedId: 'p1',
+  places: [],
+  collections: [],
+  selectedId: '',
   filter: '전체',
   search: '',
   pendingImage: '',
   pendingLat: null,
   pendingLng: null,
   map: null,
-  pickerMap: null
+  pickerMap: null,
+  savingPlace: false,
+  savingCollection: false,
+  deletingPlace: false
 };
 
 const $ = selector => document.querySelector(selector);
 const view = $('#view');
 const DEFAULT_CENTER = [36.35, 127.85];
-
-function save() {
-  localStorage.setItem('yyj_places', JSON.stringify(state.places));
-  localStorage.setItem('yyj_collections', JSON.stringify(state.collections));
-}
 
 function toast(message) {
   const old = document.querySelector('.toast');
@@ -133,14 +131,26 @@ window.sharePlace = async id => {
   } catch (_) {}
 };
 
-window.deletePlace = id => {
+window.deletePlace = async id => {
   if (!confirm('이 장소를 삭제할까요?')) return;
-  state.places = state.places.filter(place => place.id !== id);
-  state.selectedId = state.places[0]?.id || '';
-  save();
-  detailDialog.close();
-  render();
-  toast('장소를 삭제했습니다.');
+  if (state.deletingPlace) return;
+  state.deletingPlace = true;
+  const button = detailDialog.querySelector('.danger');
+  if (button) button.disabled = true;
+  try {
+    await YYJDataStore.deletePlace(id);
+    state.places = state.places.filter(place => place.id !== id);
+    state.selectedId = state.places[0]?.id || '';
+    detailDialog.close();
+    render();
+    toast('장소를 삭제했습니다.');
+  } catch (error) {
+    console.error('장소 삭제 실패', error);
+    toast(error.message || '장소를 삭제하지 못했습니다.');
+  } finally {
+    state.deletingPlace = false;
+    if (button) button.disabled = false;
+  }
 };
 
 function filteredPlaces() {
@@ -305,6 +315,9 @@ function renderAdd() {
   disposeMaps();
   setHeader('장소 저장', '사진과 위치로 기억 남기기');
   view.innerHTML = $('#addViewTemplate').innerHTML;
+  if (YYJDataStore.getMode() === 'server') {
+    $('#uploadCard').insertAdjacentHTML('afterend', '<p class="storage-note">사진은 현재 기기에만 저장됩니다.</p>');
+  }
   $('#collectionSelect').innerHTML = state.collections.map(collection => `<option value="${esc(collection.id)}">${esc(collection.name)}</option>`).join('');
 
   const photo = $('#photoInput');
@@ -352,8 +365,9 @@ function renderAdd() {
   $('#latitude').onchange = () => updatePickerPosition($('#latitude').value, $('#longitude').value, markerRef, true);
   $('#longitude').onchange = () => updatePickerPosition($('#latitude').value, $('#longitude').value, markerRef, true);
 
-  $('#placeForm').onsubmit = event => {
+  $('#placeForm').onsubmit = async event => {
     event.preventDefault();
+    if (state.savingPlace) return;
     const name = $('#placeName').value.trim();
     if (!name) {
       toast('장소 이름을 입력해 주세요.');
@@ -361,8 +375,11 @@ function renderAdd() {
     }
     const latitude = Number($('#latitude').value);
     const longitude = Number($('#longitude').value);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      toast('올바른 위도와 경도를 입력해 주세요.');
+      return;
+    }
     const place = {
-      id: `p${Date.now()}`,
       name,
       category: $('#category').value,
       memo: $('#memo').value.trim(),
@@ -374,17 +391,30 @@ function renderAdd() {
       privacy: document.querySelector('[name=privacy]:checked').value,
       image: state.pendingImage
     };
-    state.places.unshift(place);
-    state.selectedId = place.id;
-    state.pendingImage = '';
-    state.pendingLat = null;
-    state.pendingLng = null;
-    state.search = '';
-    save();
-    state.tab = 'map';
-    syncNav();
-    render();
-    toast('장소를 저장했습니다.');
+    const submit = event.currentTarget.querySelector('[type=submit]');
+    state.savingPlace = true;
+    submit.disabled = true;
+    submit.textContent = '저장 중…';
+    try {
+      const created = await YYJDataStore.createPlace(place);
+      state.places.unshift(created);
+      state.selectedId = created.id;
+      state.pendingImage = '';
+      state.pendingLat = null;
+      state.pendingLng = null;
+      state.search = '';
+      state.tab = 'map';
+      syncNav();
+      render();
+      toast(created.photoSaveFailed ? '장소는 저장했지만 사진은 기기에 저장하지 못했습니다.' : '장소를 저장했습니다.');
+    } catch (error) {
+      console.error('장소 저장 실패', error);
+      toast(error.message || '장소를 저장하지 못했습니다.');
+      submit.disabled = false;
+      submit.textContent = '장소 저장하기';
+    } finally {
+      state.savingPlace = false;
+    }
   };
 }
 
@@ -408,13 +438,29 @@ function renderCollections() {
     };
   });
 
-  $('#newCollectionButton').onclick = () => {
+  $('#newCollectionButton').onclick = async () => {
+    if (state.savingCollection) return;
     const name = prompt('새 컬렉션 이름을 입력하세요.');
-    if (!name?.trim()) return;
-    state.collections.push({ id: `c${Date.now()}`, name: name.trim().slice(0, 60), privacy: 'private' });
-    save();
-    renderCollections();
-    toast('컬렉션을 만들었습니다.');
+    const trimmed = name?.trim();
+    if (!trimmed) return;
+    if (trimmed.length > 60) {
+      toast('컬렉션 이름은 60자까지 입력할 수 있습니다.');
+      return;
+    }
+    state.savingCollection = true;
+    $('#newCollectionButton').disabled = true;
+    try {
+      const created = await YYJDataStore.createCollection({ name: trimmed, privacy: 'private' });
+      state.collections.push(created);
+      renderCollections();
+      toast('컬렉션을 만들었습니다.');
+    } catch (error) {
+      console.error('컬렉션 생성 실패', error);
+      toast(error.message || '컬렉션을 만들지 못했습니다.');
+      $('#newCollectionButton').disabled = false;
+    } finally {
+      state.savingCollection = false;
+    }
   };
 }
 
@@ -437,7 +483,7 @@ document.querySelectorAll('.nav-item').forEach(button => {
 
 $('#profileButton').onclick = () => {
   const dialog = $('#settingsDialog');
-  dialog.innerHTML = '<h2>여기였지</h2><p>실제 지도 기능이 적용된 공개 테스트 버전입니다.</p><p class="meta">지도 데이터: © OpenStreetMap contributors</p><div class="settings-list"><button id="exportButton">데이터 백업 파일 만들기</button><button id="resetButton">샘플 데이터로 초기화</button><button onclick="settingsDialog.close()">닫기</button></div>';
+  dialog.innerHTML = `<h2>여기였지</h2><p>${esc(YYJDataStore.statusText())}</p><p class="meta">지도 데이터: © OpenStreetMap contributors</p><div class="settings-list"><button id="exportButton">데이터 백업 파일 만들기</button>${YYJDataStore.getMode() === 'browser' ? '<button id="resetButton">샘플 데이터로 초기화</button>' : ''}<button onclick="settingsDialog.close()">닫기</button></div>`;
   dialog.showModal();
   $('#exportButton').onclick = () => {
     const blob = new Blob([JSON.stringify({ places: state.places, collections: state.collections }, null, 2)], { type: 'application/json' });
@@ -447,12 +493,34 @@ $('#profileButton').onclick = () => {
     anchor.click();
     URL.revokeObjectURL(anchor.href);
   };
-  $('#resetButton').onclick = () => {
-    localStorage.clear();
+  const resetButton = $('#resetButton');
+  if (resetButton) resetButton.onclick = () => {
+    localStorage.removeItem('yyj_places');
+    localStorage.removeItem('yyj_collections');
     location.reload();
   };
 };
 
 window.settingsDialog = $('#settingsDialog');
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js').catch(() => {});
-render();
+
+async function initializeApp() {
+  view.innerHTML = '<div class="loading"><p>장소와 컬렉션을 불러오는 중…</p></div>';
+  try {
+    const loaded = await YYJDataStore.initialize(seedPlaces, seedCollections);
+    state.places = loaded.places;
+    state.collections = loaded.collections;
+    state.selectedId = state.places[0]?.id || '';
+    $('#storageStatus').textContent = YYJDataStore.statusText();
+    if (loaded.fallback) toast('서버 연결 실패 — 브라우저 저장으로 전환했습니다.');
+  } catch (error) {
+    console.error('앱 데이터 초기화 실패', error);
+    state.places = [];
+    state.collections = [];
+    $('#storageStatus').textContent = '이 브라우저에 저장 중';
+    toast('데이터를 불러오지 못해 빈 상태로 시작합니다.');
+  }
+  render();
+}
+
+initializeApp();

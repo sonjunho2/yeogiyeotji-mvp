@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 const { URL } = require('node:url');
 
 const PORT = Number(process.env.PORT || 4100);
-const DATA_FILE = path.join(__dirname, 'data', 'store.json');
+const DATA_FILE = process.env.DATA_FILE ? path.resolve(process.env.DATA_FILE) : path.join(__dirname, 'data', 'store.json');
 const WEB_ROOT = path.resolve(__dirname, '..', 'apps', 'web-prototype');
 
 function seed() {
@@ -61,9 +61,12 @@ function validatePlace(body) {
   const errors = [];
   if (typeof body.name !== 'string' || !body.name.trim()) errors.push('name is required');
   if (typeof body.category !== 'string' || !body.category.trim()) errors.push('category is required');
-  if (!Number.isFinite(Number(body.latitude))) errors.push('latitude must be a number');
-  if (!Number.isFinite(Number(body.longitude))) errors.push('longitude must be a number');
+  const latitude = Number(body.latitude);
+  const longitude = Number(body.longitude);
+  if (body.latitude === null || body.latitude === '' || !Number.isFinite(latitude) || latitude < -90 || latitude > 90) errors.push('latitude must be between -90 and 90');
+  if (body.longitude === null || body.longitude === '' || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) errors.push('longitude must be between -180 and 180');
   if (body.privacy && !['private', 'link', 'public'].includes(body.privacy)) errors.push('invalid privacy');
+  if (typeof body.imageUrl === 'string' && (body.imageUrl.startsWith('data:') || body.imageUrl.length > 2048)) errors.push('imageUrl must be a short external URL');
   return errors;
 }
 function serveStatic(req, res, pathname) {
@@ -122,6 +125,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/collections' && req.method === 'POST') {
       const body = await readBody(req);
       if (typeof body.name !== 'string' || !body.name.trim()) return json(res, 400, { error: 'name_required' });
+      if (body.name.trim().length > 60) return json(res, 400, { error: 'name_too_long' });
       const collection = { id: crypto.randomUUID(), userId: 'demo-user', name: body.name.trim(), privacy: body.privacy === 'link' ? 'link' : 'private', shareToken: body.privacy === 'link' ? crypto.randomBytes(8).toString('hex') : null };
       store.collections.push(collection); saveStore(store); return json(res, 201, { item: collection });
     }
@@ -136,7 +140,8 @@ const server = http.createServer(async (req, res) => {
     if (serveStatic(req, res, pathname)) return;
     return json(res, 404, { error: 'not_found' });
   } catch (error) {
-    return json(res, error.message === 'Payload too large' ? 413 : 500, { error: 'server_error', message: error.message });
+    const status = error.message === 'Payload too large' ? 413 : error.message === 'Invalid JSON' ? 400 : 500;
+    return json(res, status, { error: status === 400 ? 'invalid_json' : 'server_error', message: error.message });
   }
 });
 
