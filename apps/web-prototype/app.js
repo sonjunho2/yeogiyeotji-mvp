@@ -26,7 +26,9 @@ const state = {
   pickerMap: null,
   savingPlace: false,
   savingCollection: false,
-  deletingPlace: false
+  deletingPlace: false,
+  user: null,
+  authMode: 'login'
 };
 
 const $ = selector => document.querySelector(selector);
@@ -41,6 +43,58 @@ function toast(message) {
   element.textContent = message;
   document.body.appendChild(element);
   setTimeout(() => element.remove(), 2500);
+}
+
+function clearPrivateState() {
+  disposeMaps();
+  state.places = [];
+  state.collections = [];
+  state.selectedId = '';
+  state.pendingImage = '';
+  state.pendingLat = null;
+  state.pendingLng = null;
+  state.user = null;
+}
+
+function handleAuthenticationError(error) {
+  if (!(error instanceof YYJDataStore.AuthenticationError)) return false;
+  clearPrivateState();
+  renderAuth();
+  toast(error.message || '다시 로그인해 주세요.');
+  return true;
+}
+
+function renderAuth() {
+  document.body.classList.add('auth-visible');
+  const registering = state.authMode === 'register';
+  setHeader('여기였지', '내 장소를 안전하게 기억하기');
+  view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${registering ? '회원가입' : '로그인'}</h2><p>${registering ? '나만의 장소와 컬렉션을 시작하세요.' : '저장한 장소를 다시 만나보세요.'}</p><form id="authForm">${registering ? '<label class="field"><span>표시 이름</span><input id="authDisplayName" autocomplete="name" maxlength="40" required /></label>' : ''}<label class="field"><span>이메일</span><input id="authEmail" type="email" autocomplete="email" maxlength="254" required /></label><label class="field"><span>비밀번호</span><input id="authPassword" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" minlength="8" maxlength="128" required /></label><p id="authError" class="auth-error" role="alert"></p><button class="primary full" type="submit">${registering ? '가입하기' : '로그인'}</button></form><button id="authSwitch" class="auth-switch" type="button">${registering ? '이미 계정이 있나요? 로그인' : '처음이신가요? 회원가입'}</button></div></section>`;
+  $('#authSwitch').onclick = () => { state.authMode = registering ? 'login' : 'register'; renderAuth(); };
+  $('#authForm').onsubmit = async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('[type=submit]');
+    const errorBox = $('#authError');
+    button.disabled = true;
+    button.textContent = '처리 중…';
+    errorBox.textContent = '';
+    try {
+      const credentials = { email: $('#authEmail').value, password: $('#authPassword').value };
+      if (registering) credentials.displayName = $('#authDisplayName').value;
+      state.user = registering ? await YYJDataStore.register(credentials) : await YYJDataStore.login(credentials);
+      const loaded = await YYJDataStore.loadServerData();
+      state.places = loaded.places;
+      state.collections = loaded.collections;
+      state.selectedId = state.places[0]?.id || '';
+      state.tab = 'map';
+      document.body.classList.remove('auth-visible');
+      syncNav();
+      render();
+    } catch (error) {
+      errorBox.textContent = error.message || '요청을 처리하지 못했습니다.';
+      button.disabled = false;
+      button.textContent = registering ? '가입하기' : '로그인';
+    }
+  };
 }
 
 function esc(value = '') {
@@ -145,6 +199,7 @@ window.deletePlace = async id => {
     render();
     toast('장소를 삭제했습니다.');
   } catch (error) {
+    if (handleAuthenticationError(error)) return;
     console.error('장소 삭제 실패', error);
     toast(error.message || '장소를 삭제하지 못했습니다.');
   } finally {
@@ -408,6 +463,7 @@ function renderAdd() {
       render();
       toast(created.photoSaveFailed ? '장소는 저장했지만 사진은 기기에 저장하지 못했습니다.' : '장소를 저장했습니다.');
     } catch (error) {
+      if (handleAuthenticationError(error)) return;
       console.error('장소 저장 실패', error);
       toast(error.message || '장소를 저장하지 못했습니다.');
       submit.disabled = false;
@@ -438,31 +494,73 @@ function renderCollections() {
     };
   });
 
-  $('#newCollectionButton').onclick = async () => {
-    if (state.savingCollection) return;
-    const name = prompt('새 컬렉션 이름을 입력하세요.');
-    const trimmed = name?.trim();
-    if (!trimmed) return;
-    if (trimmed.length > 60) {
-      toast('컬렉션 이름은 60자까지 입력할 수 있습니다.');
+  $('#newCollectionButton').onclick = openCollectionDialog;
+}
+
+function openCollectionDialog() {
+  if (state.savingCollection) return;
+  const dialog = $('#collectionDialog');
+  const form = $('#collectionForm');
+  form.reset();
+  $('#collectionError').textContent = '';
+  $('#createCollectionButton').disabled = false;
+  $('#createCollectionButton').textContent = '만들기';
+  dialog.showModal();
+  requestAnimationFrame(() => $('#collectionName').focus());
+}
+
+$('#cancelCollectionButton').onclick = () => {
+  if (!state.savingCollection) $('#collectionDialog').close();
+};
+
+$('#collectionDialog').addEventListener('cancel', event => {
+  if (state.savingCollection) event.preventDefault();
+});
+
+$('#collectionForm').onsubmit = async event => {
+  event.preventDefault();
+  if (state.savingCollection) return;
+  const rawName = $('#collectionName').value;
+  const name = typeof rawName === 'string' ? rawName.trim() : '';
+  const privacy = document.querySelector('[name=collectionPrivacy]:checked')?.value;
+  const errorBox = $('#collectionError');
+  const submit = $('#createCollectionButton');
+  errorBox.textContent = '';
+  if (!name) {
+    errorBox.textContent = '컬렉션 이름을 입력해 주세요.';
+    return;
+  }
+  if (name.length > 60) {
+    errorBox.textContent = '컬렉션 이름은 60자까지 입력할 수 있습니다.';
+    return;
+  }
+  if (!['private', 'link'].includes(privacy)) {
+    errorBox.textContent = '공개 범위를 선택해 주세요.';
+    return;
+  }
+  state.savingCollection = true;
+  submit.disabled = true;
+  submit.textContent = '만드는 중…';
+  try {
+    const created = await YYJDataStore.createCollection({ name, privacy });
+    state.collections.push(created);
+    $('#collectionDialog').close();
+    if (state.tab === 'collections') renderCollections();
+    else if (state.tab === 'add') renderAdd();
+    toast('컬렉션을 만들었습니다.');
+  } catch (error) {
+    if (handleAuthenticationError(error)) {
+      $('#collectionDialog').close();
       return;
     }
-    state.savingCollection = true;
-    $('#newCollectionButton').disabled = true;
-    try {
-      const created = await YYJDataStore.createCollection({ name: trimmed, privacy: 'private' });
-      state.collections.push(created);
-      renderCollections();
-      toast('컬렉션을 만들었습니다.');
-    } catch (error) {
-      console.error('컬렉션 생성 실패', error);
-      toast(error.message || '컬렉션을 만들지 못했습니다.');
-      $('#newCollectionButton').disabled = false;
-    } finally {
-      state.savingCollection = false;
-    }
-  };
-}
+    console.error('컬렉션 생성 실패', { status: error.status, message: error.message });
+    errorBox.textContent = error.message || '컬렉션을 만들지 못했습니다.';
+  } finally {
+    state.savingCollection = false;
+    submit.disabled = false;
+    submit.textContent = '만들기';
+  }
+};
 
 function render() {
   ({ map: renderMap, memories: renderMemories, add: renderAdd, collections: renderCollections }[state.tab] || renderMap)();
@@ -483,7 +581,8 @@ document.querySelectorAll('.nav-item').forEach(button => {
 
 $('#profileButton').onclick = () => {
   const dialog = $('#settingsDialog');
-  dialog.innerHTML = `<h2>여기였지</h2><p>${esc(YYJDataStore.statusText())}</p><p class="meta">지도 데이터: © OpenStreetMap contributors</p><div class="settings-list"><button id="exportButton">데이터 백업 파일 만들기</button>${YYJDataStore.getMode() === 'browser' ? '<button id="resetButton">샘플 데이터로 초기화</button>' : ''}<button onclick="settingsDialog.close()">닫기</button></div>`;
+  const modeDescription = YYJDataStore.getMode() === 'server' ? `${esc(state.user?.displayName || '')}님으로 로그인됨` : '브라우저 데모 모드 · 이 기기에만 저장됩니다';
+  dialog.innerHTML = `<h2>여기였지</h2><p>${modeDescription}</p><p>${esc(YYJDataStore.statusText())}</p><p class="meta">지도 데이터: © OpenStreetMap contributors</p><div class="settings-list"><button id="exportButton">데이터 백업 파일 만들기</button>${YYJDataStore.getMode() === 'browser' ? '<button id="resetButton">샘플 데이터로 초기화</button>' : '<button id="logoutButton">로그아웃</button>'}<button onclick="settingsDialog.close()">닫기</button></div>`;
   dialog.showModal();
   $('#exportButton').onclick = () => {
     const blob = new Blob([JSON.stringify({ places: state.places, collections: state.collections }, null, 2)], { type: 'application/json' });
@@ -499,6 +598,15 @@ $('#profileButton').onclick = () => {
     localStorage.removeItem('yyj_collections');
     location.reload();
   };
+  const logoutButton = $('#logoutButton');
+  if (logoutButton) logoutButton.onclick = async () => {
+    logoutButton.disabled = true;
+    try { await YYJDataStore.logout(); } catch (error) { console.error('로그아웃 요청 실패', error); }
+    settingsDialog.close();
+    clearPrivateState();
+    state.authMode = 'login';
+    renderAuth();
+  };
 };
 
 window.settingsDialog = $('#settingsDialog');
@@ -510,9 +618,15 @@ async function initializeApp() {
     const loaded = await YYJDataStore.initialize(seedPlaces, seedCollections);
     state.places = loaded.places;
     state.collections = loaded.collections;
+    state.user = loaded.user || null;
     state.selectedId = state.places[0]?.id || '';
     $('#storageStatus').textContent = YYJDataStore.statusText();
     if (loaded.fallback) toast('서버 연결 실패 — 브라우저 저장으로 전환했습니다.');
+    if (loaded.authRequired) {
+      clearPrivateState();
+      renderAuth();
+      return;
+    }
   } catch (error) {
     console.error('앱 데이터 초기화 실패', error);
     state.places = [];
@@ -520,6 +634,7 @@ async function initializeApp() {
     $('#storageStatus').textContent = '이 브라우저에 저장 중';
     toast('데이터를 불러오지 못해 빈 상태로 시작합니다.');
   }
+  document.body.classList.remove('auth-visible');
   render();
 }
 

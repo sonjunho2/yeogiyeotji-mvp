@@ -113,6 +113,19 @@ button { -webkit-tap-highlight-color: transparent; }
 .empty { padding: 50px 20px; text-align: center; color: var(--muted); }
 .loading { min-height: 55dvh; display: grid; place-items: center; color: var(--muted); text-align: center; }
 .storage-note { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--soft); color: var(--muted); font-size: 11px; }
+.auth-visible .app-header .icon-button, .auth-visible .storage-status, .auth-visible .bottom-nav { display: none; }
+.auth-visible .app-shell { padding-bottom: 0; }
+.auth-view { min-height: calc(100dvh - 104px); display: grid; place-items: start center; padding-top: 34px; }
+.auth-card { width: 100%; background: var(--surface); border-radius: 22px; padding: 24px; box-shadow: var(--shadow); }
+.auth-card h2 { margin: 0 0 6px; }
+.auth-card > p { margin: 0 0 22px; color: var(--muted); font-size: 13px; }
+.auth-card form { display: grid; gap: 15px; }
+.auth-error { min-height: 20px; margin: 0; color: var(--danger); font-size: 12px; }
+.auth-switch { width: 100%; border: 0; background: none; color: var(--primary); padding: 18px 4px 0; cursor: pointer; }
+.collection-privacy { margin-top: 16px; }
+.form-error { min-height: 20px; margin: 10px 0 0; color: var(--danger); font-size: 12px; }
+.dialog-form-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.dialog-form-actions button { width: 100%; }
 .primary:disabled, .secondary:disabled, .danger:disabled { opacity: .55; cursor: wait; }
 .toast { position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); background: var(--primary-dark); color: #fff; padding: 12px 18px; border-radius: 999px; z-index: 2000; box-shadow: var(--shadow); animation: fade 2.4s both; white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis; }
 
