@@ -9,9 +9,10 @@
     "test:api": "node server/test-api.js",
     "test:postgres": "node server/test-postgres.js",
     "test:legacy-recovery": "node server/test-legacy-recovery.js",
+    "test:web-datastore": "node server/test-web-datastore.js",
     "db:migrate": "node server/db/migrate.js",
     "db:import-json": "node server/db/import-json.js",
-    "test": "npm run test:storage && npm run test:api && npm run test:legacy-recovery"
+    "test": "npm run test:storage && npm run test:api && npm run test:legacy-recovery && npm run test:web-datastore"
   },
   "dependencies": {
     "pg": "^8.22.0"
