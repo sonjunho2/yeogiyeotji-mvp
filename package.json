@@ -11,11 +11,15 @@
     "test:legacy-recovery": "node server/test-legacy-recovery.js",
     "test:web-datastore": "node server/test-web-datastore.js",
     "test:service-worker": "node server/test-service-worker.js",
+    "test:supabase-jwt": "node server/test-supabase-jwt.js",
+    "test:request-auth": "node server/test-request-auth.js",
+    "test:server-auth-init": "node server/test-server-auth-init.js",
     "db:migrate": "node server/db/migrate.js",
     "db:import-json": "node server/db/import-json.js",
-    "test": "npm run test:storage && npm run test:api && npm run test:legacy-recovery && npm run test:web-datastore && npm run test:service-worker"
+    "test": "npm run test:storage && npm run test:api && npm run test:legacy-recovery && npm run test:web-datastore && npm run test:service-worker && npm run test:supabase-jwt && npm run test:request-auth && npm run test:server-auth-init"
   },
   "dependencies": {
+    "jose": "^6.2.7",
     "pg": "^8.22.0"
   }
 }

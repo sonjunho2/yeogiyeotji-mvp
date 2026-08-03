@@ -7,10 +7,13 @@ const crypto = require('node:crypto');
 const { URL } = require('node:url');
 const { createStorage } = require('./storage');
 const { hashPassword, verifyPassword } = require('./auth/password');
+const { createSupabaseJwtVerifier } = require('./auth/supabase-jwt');
+const { resolveRequestAuthentication } = require('./auth/request-auth');
 
 const PORT = Number(process.env.PORT || 4100);
 const DATA_FILE = process.env.DATA_FILE ? path.resolve(process.env.DATA_FILE) : path.join(__dirname, 'data', 'store.json');
 const storage = createStorage({ dataFile: DATA_FILE });
+let jwtVerifier = null;
 const WEB_ROOT = path.resolve(__dirname, '..', 'apps', 'web-prototype');
 const SESSION_COOKIE = 'yyj_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
@@ -67,25 +70,17 @@ function publicUser(user) {
 }
 
 async function getAuthenticatedUser(req, storage) {
-  const sessionToken = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-  if (!sessionToken) return null;
-  const tokenHash = crypto.createHash('sha256').update(sessionToken).digest('hex');
-  const session = await storage.findSessionByTokenHash(tokenHash);
-  if (!session) return null;
-  if (Date.parse(session.expiresAt) <= Date.now()) {
-    await storage.deleteSession(tokenHash);
-    return null;
-  }
-  const user = await storage.findUserById(session.userId);
-  if (!user || !user.passwordHash || !user.passwordSalt) {
-    await storage.deleteSession(tokenHash);
-    return null;
-  }
-  return { user, sessionToken };
+  return resolveRequestAuthentication({ req, storage, jwtVerifier });
 }
 
 async function requireUser(req, res, storage) {
-  const auth = await getAuthenticatedUser(req, storage);
+  let auth;
+  try { auth = await getAuthenticatedUser(req, storage); } catch (error) {
+    if (!['INVALID_AUTHORIZATION', 'JWT_AUTH_UNAVAILABLE', 'INVALID_TOKEN', 'AUTH_USER_NOT_LINKED', 'AUTH_IDENTITY_CONFLICT'].includes(error.code)) throw error;
+    const status = error.code === 'AUTH_IDENTITY_CONFLICT' ? 409 : 401;
+    authJson(res, status, { error: error.code === 'INVALID_AUTHORIZATION' ? 'invalid_authorization' : error.code === 'JWT_AUTH_UNAVAILABLE' ? 'jwt_auth_unavailable' : error.code === 'AUTH_USER_NOT_LINKED' ? 'auth_user_not_linked' : error.code === 'AUTH_IDENTITY_CONFLICT' ? 'auth_identity_conflict' : 'invalid_token', message: '인증을 확인할 수 없습니다.' });
+    return null;
+  }
   if (!auth) {
     authJson(res, 401, { error: 'unauthorized', message: '로그인이 필요합니다.' });
     return null;
@@ -290,10 +285,22 @@ const server = http.createServer(async (req, res) => {
 const cleanupTimer = setInterval(() => storage.deleteExpiredSessions(new Date().toISOString()).catch(() => {}), 60 * 60 * 1000);
 cleanupTimer.unref();
 
-storage.initialize().then(() => server.listen(PORT, '0.0.0.0', () => {
+storage.initialize().then(async () => {
+  jwtVerifier = await createSupabaseJwtVerifier();
+  if (jwtVerifier && typeof storage.findUserByAuthUserId !== 'function') {
+    const error = new Error('Authentication configuration is invalid');
+    error.code = 'AUTH_CONFIGURATION_ERROR';
+    throw error;
+  }
+  return server.listen(PORT, '0.0.0.0', () => {
   console.log(`여기였지 API: http://localhost:${PORT}`);
   console.log(`웹 프로토타입: http://localhost:${PORT}/`);
-})).catch(error => {
-  console.error('Storage initialization failed:', error.message);
+  });
+}).catch(error => {
+  if (error && (error.code === 'SUPABASE_JWT_CONFIG_ERROR' || error.code === 'AUTH_CONFIGURATION_ERROR')) {
+    console.error('Server initialization failed: Authentication configuration is invalid');
+  } else {
+    console.error('Server initialization failed');
+  }
   process.exitCode = 1;
 });
