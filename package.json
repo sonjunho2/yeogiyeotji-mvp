@@ -5,6 +5,8 @@
   "description": "사진과 위치로 장소를 기록하는 여기였지 MVP",
   "scripts": {
     "start": "node server/server.js",
-    "test": "node server/test-api.js"
+    "test:storage": "node server/test-storage.js",
+    "test:api": "node server/test-api.js",
+    "test": "npm run test:storage && npm run test:api"
   }
 }

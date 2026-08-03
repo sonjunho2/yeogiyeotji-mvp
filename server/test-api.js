@@ -133,7 +133,22 @@ const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /passw
       assert.equal((await fetch(`${baseUrl}/${asset}`)).status, 200, `${asset} 정적 경로`);
     }
 
-    console.log('API tests passed: 20 auth, isolation, validation, and static-file scenarios');
+    const duplicateClients = Array.from({ length: 2 }, () => createClient());
+    const duplicateResults = await Promise.all(duplicateClients.map(client => client('/api/auth/register', jsonOptions('POST', { email: 'race@example.com', password: 'password-R', displayName: 'Race' }))));
+    assert.deepEqual(duplicateResults.map(result => result.response.status).sort(), [201, 409]);
+    assert.equal(duplicateResults.filter(result => result.body.error === 'email_exists').length, 1);
+
+    const concurrentUser = createClient();
+    const concurrentRegistration = await concurrentUser('/api/auth/register', jsonOptions('POST', { email: 'concurrent@example.com', password: 'password-C', displayName: 'Concurrent' }));
+    assert.equal(concurrentRegistration.response.status, 201);
+    const concurrentPlaces = await Promise.all(Array.from({ length: 10 }, (_, index) => concurrentUser('/api/places', jsonOptions('POST', { name: `Concurrent place ${index}`, category: 'test', latitude: 37 + index / 100, longitude: 127 }))));
+    assert.ok(concurrentPlaces.every(result => result.response.status === 201));
+    assert.equal((await concurrentUser('/api/places')).body.items.length, 10);
+    const concurrentCollections = await Promise.all(Array.from({ length: 10 }, (_, index) => concurrentUser('/api/collections', jsonOptions('POST', { name: `Concurrent collection ${index}`, privacy: 'private' }))));
+    assert.ok(concurrentCollections.every(result => result.response.status === 201));
+    assert.equal((await concurrentUser('/api/collections')).body.items.length, 10);
+
+    console.log('API tests passed: 20 baseline plus concurrent registration, place, and collection scenarios');
   } finally {
     child.kill();
     await new Promise(resolve => child.once('exit', resolve));
