@@ -84,16 +84,16 @@ let rollbackSchema;
   importPool = createPool({ connectionString: url, options: `-c search_path=${quoteIdentifier(importSchema)},pg_catalog` });
   await migrate({ pool: importPool });
   const importUser = { id: crypto.randomUUID(), email: 'import-a@example.com', displayName: 'Import A', ...hashPassword('Current fixture password 123'), createdAt: new Date().toISOString() };
-  const legacyUser = { id: crypto.randomUUID(), email: 'legacy-fixture@example.com', name: 'Legacy fixture', createdAt: new Date().toISOString() };
+  const legacyUser = { id: crypto.randomUUID(), email: 'legacy-fixture@example.com', name: 'Legacy fixture' };
   const importCollection = { id: crypto.randomUUID(), ownerId: importUser.id, name: 'Import collection', privacy: 'private', shareToken: null, createdAt: new Date().toISOString() };
-  const legacyCollections = [0, 1, 2].map(index => ({ id: crypto.randomUUID(), userId: legacyUser.id, name: `Legacy collection ${index}`, privacy: 'private', shareToken: null, createdAt: new Date().toISOString() }));
+  const legacyCollections = [0, 1, 2].map(index => ({ id: crypto.randomUUID(), userId: legacyUser.id, name: `Legacy collection ${index}`, privacy: 'private', shareToken: null }));
   const importPlace = { id: crypto.randomUUID(), ownerId: importUser.id, name: 'Import place', category: 'test', memo: '', tags: ['one', 'two'], visitedAt: '2026-08-03', latitude: 37, longitude: 127, collectionId: null, privacy: 'private', imageUrl: null, createdAt: new Date().toISOString() };
-  const legacyPlaces = [0, 1].map(index => ({ id: crypto.randomUUID(), userId: legacyUser.id, name: `Legacy place ${index}`, category: 'test', memo: '', tags: [], visitedAt: '2026-08-03', latitude: 37, longitude: 127, collectionId: legacyCollections[index].id, privacy: 'private', imageUrl: null, createdAt: new Date().toISOString() }));
+  const legacyPlaces = [0, 1].map(index => ({ id: crypto.randomUUID(), userId: legacyUser.id, name: `Legacy place ${index}`, category: 'test', memo: '', tags: [], visitedAt: '2026-08-03', latitude: 37, longitude: 127, collectionId: legacyCollections[index * 2].id, privacy: 'private', imageUrl: null, createdAt: `2026-01-0${index + 1}T00:00:00.000Z` }));
   const importSource = { users: [legacyUser, importUser], collections: [...legacyCollections, importCollection], places: [...legacyPlaces, importPlace] };
-  const { recoveredStore } = recoverLegacyUser(importSource, { userIndex: 0, password: 'Legacy fixture password 123' });
+  const { recoveredStore, summary: recoverySummary } = recoverLegacyUser(importSource, { userIndex: 0, password: 'Legacy fixture password 123' });
   const importPlan = buildImportPlan(recoveredStore);
-  const importResult = await executeImport({ pool: importPool, plan: importPlan });
-  if (importResult.importable.users !== 2 || importResult.importable.collections !== 4 || importResult.importable.places !== 3) throw new Error('import execute failed: expected importable counts 2,4,3');
+  const importResult = await executeImport({ pool: importPool, plan: importPlan, recoverySummary });
+  if (importResult.importable.users !== 2 || importResult.importable.collections !== 4 || importResult.importable.places !== 3 || importResult.recoveredUsers !== 1 || importResult.convertedCollections !== 3 || importResult.convertedPlaces !== 2 || importResult.inferredUserTimestamps !== 1 || importResult.inferredCollectionTimestamps !== 3 || importResult.rejectedRecords !== 0) throw new Error('import execute failed: expected import and recovery summary');
   async function counts(pool) { const result = await pool.query('SELECT (SELECT COUNT(*)::int FROM users) AS users, (SELECT COUNT(*)::int FROM collections) AS collections, (SELECT COUNT(*)::int FROM places) AS places'); return result.rows[0]; }
   const firstCounts = await counts(importPool);
   if (firstCounts.users !== 2 || firstCounts.collections !== 4 || firstCounts.places !== 3) throw new Error('import execute failed: expected row counts 2,4,3');
@@ -104,7 +104,13 @@ let rollbackSchema;
   if (!importedCollection || importedCollection.id !== importCollection.id || importedCollection.owner_id !== importUser.id) throw new Error('import field preservation failed: expected collection fields');
   if (!importedPlace || importedPlace.id !== importPlace.id || importedPlace.owner_id !== importUser.id || importedPlace.memo !== '' || importedPlace.collection_id !== null || importedPlace.image_url !== null || importedPlace.visited_at !== importPlace.visitedAt || JSON.stringify(importedPlace.tags) !== JSON.stringify(importPlace.tags)) throw new Error('import field preservation failed: expected place fields');
   const importedLegacyUser = (await importPool.query('SELECT * FROM users WHERE id = $1', [legacyUser.id])).rows[0];
-  if (!importedLegacyUser || importedLegacyUser.id !== legacyUser.id || importedLegacyUser.display_name !== 'Legacy fixture' || !verifyPassword('Legacy fixture password 123', { passwordHash: importedLegacyUser.password_hash, passwordSalt: importedLegacyUser.password_salt })) throw new Error('legacy recovery import failed: expected recovered credentials');
+  if (!importedLegacyUser || importedLegacyUser.id !== legacyUser.id || importedLegacyUser.display_name !== 'Legacy fixture' || importedLegacyUser.created_at.toISOString() !== '2026-01-01T00:00:00.000Z' || !verifyPassword('Legacy fixture password 123', { passwordHash: importedLegacyUser.password_hash, passwordSalt: importedLegacyUser.password_salt })) throw new Error('legacy recovery import failed: expected recovered credentials and timestamp');
+  const importedLegacyCollection = (await importPool.query('SELECT created_at FROM collections WHERE owner_id = $1 ORDER BY created_at ASC LIMIT 1', [legacyUser.id])).rows[0];
+  if (!importedLegacyCollection || importedLegacyCollection.created_at.toISOString() !== '2026-01-01T00:00:00.000Z') throw new Error('legacy collection timestamp recovery failed');
+  for (const [index, expected] of [[0, '2026-01-01T00:00:00.000Z'], [1, '2026-01-01T00:00:00.000Z'], [2, '2026-01-02T00:00:00.000Z']]) {
+    const row = (await importPool.query('SELECT created_at FROM collections WHERE id = $1', [legacyCollections[index].id])).rows[0];
+    if (!row || row.created_at.toISOString() !== expected) throw new Error(`legacy collection ${index} timestamp recovery failed`);
+  }
   if ((await importPool.query('SELECT COUNT(*)::int AS count FROM collections WHERE owner_id = $1', [legacyUser.id])).rows[0].count !== 3) throw new Error('legacy collection ownership import failed: expected 3');
   if ((await importPool.query('SELECT COUNT(*)::int AS count FROM places WHERE owner_id = $1', [legacyUser.id])).rows[0].count !== 2) throw new Error('legacy place ownership import failed: expected 2');
   try { await executeImport({ pool: importPool, plan: importPlan }); throw new Error('import repeat protection failed: expected non-empty table rejection'); } catch (error) { if (error.message.startsWith('import repeat protection failed:')) throw error; }
