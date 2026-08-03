@@ -5,6 +5,8 @@ const { createPool } = require('./db/pool');
 const { migrate } = require('./db/migrate');
 const { createPostgresStorage } = require('./storage/postgres-storage');
 const { buildImportPlan, executeImport } = require('./db/import-json');
+const { recoverLegacyUser } = require('./db/import-json');
+const { hashPassword, verifyPassword } = require('./auth/password');
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) {
@@ -81,22 +83,30 @@ let rollbackSchema;
   await adminPool.query(`CREATE SCHEMA ${quoteIdentifier(importSchema)}`);
   importPool = createPool({ connectionString: url, options: `-c search_path=${quoteIdentifier(importSchema)},pg_catalog` });
   await migrate({ pool: importPool });
-  const importUser = { id: crypto.randomUUID(), email: 'import-a@example.com', displayName: 'Import A', passwordHash: 'hash', passwordSalt: 'salt', createdAt: new Date().toISOString() };
+  const importUser = { id: crypto.randomUUID(), email: 'import-a@example.com', displayName: 'Import A', ...hashPassword('Current fixture password 123'), createdAt: new Date().toISOString() };
+  const legacyUser = { id: crypto.randomUUID(), email: 'legacy-fixture@example.com', name: 'Legacy fixture', createdAt: new Date().toISOString() };
   const importCollection = { id: crypto.randomUUID(), ownerId: importUser.id, name: 'Import collection', privacy: 'private', shareToken: null, createdAt: new Date().toISOString() };
+  const legacyCollections = [0, 1, 2].map(index => ({ id: crypto.randomUUID(), userId: legacyUser.id, name: `Legacy collection ${index}`, privacy: 'private', shareToken: null, createdAt: new Date().toISOString() }));
   const importPlace = { id: crypto.randomUUID(), ownerId: importUser.id, name: 'Import place', category: 'test', memo: '', tags: ['one', 'two'], visitedAt: '2026-08-03', latitude: 37, longitude: 127, collectionId: null, privacy: 'private', imageUrl: null, createdAt: new Date().toISOString() };
-  const importSource = { users: [importUser], collections: [importCollection], places: [importPlace] };
-  const importPlan = buildImportPlan(importSource);
+  const legacyPlaces = [0, 1].map(index => ({ id: crypto.randomUUID(), userId: legacyUser.id, name: `Legacy place ${index}`, category: 'test', memo: '', tags: [], visitedAt: '2026-08-03', latitude: 37, longitude: 127, collectionId: legacyCollections[index].id, privacy: 'private', imageUrl: null, createdAt: new Date().toISOString() }));
+  const importSource = { users: [legacyUser, importUser], collections: [...legacyCollections, importCollection], places: [...legacyPlaces, importPlace] };
+  const { recoveredStore } = recoverLegacyUser(importSource, { userIndex: 0, password: 'Legacy fixture password 123' });
+  const importPlan = buildImportPlan(recoveredStore);
   const importResult = await executeImport({ pool: importPool, plan: importPlan });
-  if (importResult.importable.users !== 1 || importResult.importable.collections !== 1 || importResult.importable.places !== 1) throw new Error('import execute failed: expected importable counts 1,1,1');
+  if (importResult.importable.users !== 2 || importResult.importable.collections !== 4 || importResult.importable.places !== 3) throw new Error('import execute failed: expected importable counts 2,4,3');
   async function counts(pool) { const result = await pool.query('SELECT (SELECT COUNT(*)::int FROM users) AS users, (SELECT COUNT(*)::int FROM collections) AS collections, (SELECT COUNT(*)::int FROM places) AS places'); return result.rows[0]; }
   const firstCounts = await counts(importPool);
-  if (firstCounts.users !== 1 || firstCounts.collections !== 1 || firstCounts.places !== 1) throw new Error('import execute failed: expected row counts 1,1,1');
+  if (firstCounts.users !== 2 || firstCounts.collections !== 4 || firstCounts.places !== 3) throw new Error('import execute failed: expected row counts 2,4,3');
   const importedUser = (await importPool.query('SELECT * FROM users WHERE id = $1', [importUser.id])).rows[0];
   const importedCollection = (await importPool.query('SELECT * FROM collections WHERE id = $1', [importCollection.id])).rows[0];
   const importedPlace = (await importPool.query('SELECT * FROM places WHERE id = $1', [importPlace.id])).rows[0];
   if (!importedUser || importedUser.id !== importUser.id || importedUser.password_hash !== importUser.passwordHash || importedUser.password_salt !== importUser.passwordSalt || importedUser.created_at.toISOString() !== importUser.createdAt) throw new Error('import field preservation failed: expected user fields');
   if (!importedCollection || importedCollection.id !== importCollection.id || importedCollection.owner_id !== importUser.id) throw new Error('import field preservation failed: expected collection fields');
   if (!importedPlace || importedPlace.id !== importPlace.id || importedPlace.owner_id !== importUser.id || importedPlace.memo !== '' || importedPlace.collection_id !== null || importedPlace.image_url !== null || importedPlace.visited_at !== importPlace.visitedAt || JSON.stringify(importedPlace.tags) !== JSON.stringify(importPlace.tags)) throw new Error('import field preservation failed: expected place fields');
+  const importedLegacyUser = (await importPool.query('SELECT * FROM users WHERE id = $1', [legacyUser.id])).rows[0];
+  if (!importedLegacyUser || importedLegacyUser.id !== legacyUser.id || importedLegacyUser.display_name !== 'Legacy fixture' || !verifyPassword('Legacy fixture password 123', { passwordHash: importedLegacyUser.password_hash, passwordSalt: importedLegacyUser.password_salt })) throw new Error('legacy recovery import failed: expected recovered credentials');
+  if ((await importPool.query('SELECT COUNT(*)::int AS count FROM collections WHERE owner_id = $1', [legacyUser.id])).rows[0].count !== 3) throw new Error('legacy collection ownership import failed: expected 3');
+  if ((await importPool.query('SELECT COUNT(*)::int AS count FROM places WHERE owner_id = $1', [legacyUser.id])).rows[0].count !== 2) throw new Error('legacy place ownership import failed: expected 2');
   try { await executeImport({ pool: importPool, plan: importPlan }); throw new Error('import repeat protection failed: expected non-empty table rejection'); } catch (error) { if (error.message.startsWith('import repeat protection failed:')) throw error; }
   const secondCounts = await counts(importPool);
   if (JSON.stringify(firstCounts) !== JSON.stringify(secondCounts)) throw new Error('import repeat protection failed: expected unchanged row counts');
