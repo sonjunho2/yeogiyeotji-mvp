@@ -22,7 +22,7 @@ Supabase Auth를 장기 인증 주체로 사용하되 `public.users`는 앱 프�
 - 같은 Supabase 프로젝트 DB를 사용하는 경우 `auth.users(id)`를 참조하고 `ON DELETE SET NULL`을 적용하는 안을 검토한다.
 - 기존 owner 외래키는 유지한다.
 
-실제 migration SQL은 이번 작업에서 만들지 않는다. `auth.users.id`와 `public.users.id`를 동일하게 만들지 않는다. Supabase Auth identities가 provider identity를 관리하고, 서버는 Supabase JWT의 subject를 검증한 뒤 `auth_user_id`를 통해 기존 public 사용자 ID를 찾는다.
+`003_auth_user_mapping.sql`에서 1차 매핑 기반을 실제로 추가했다. 적용 범위는 `users.auth_user_id UUID NULL`과 `UNIQUE` 인덱스까지이며 기존 행은 모두 NULL이다. `auth.users.id`와 `public.users.id`를 동일하게 만들지 않는다. Supabase Auth identities가 provider identity를 관리하고, 서버는 Supabase JWT의 subject를 검증한 뒤 `auth_user_id`를 통해 기존 public 사용자 ID를 찾는다.
 
 Supabase Auth 내부에서는 검증된 같은 이메일의 identities가 하나의 `auth.users` 사용자에 자동 연결될 수 있다. 그러나 이 동작만으로 기존 `public.users`를 자동 병합하거나 `auth_user_id`를 설정하지 않는다. public 사용자 연결에는 기존 비밀번호 재인증, 이메일 OTP 확인, 사용자 확인, 중복 매핑 검사가 필요하다. `auth_user_id`가 이미 다른 public 사용자에 연결되어 있으면 중단한다. normalized email이 다른 public 사용자와 충돌하면 자동 처리하지 않고 복구 또는 관리자 검토 대상으로 격리한다.
 
@@ -72,7 +72,7 @@ Supabase 프로젝트 JWKS endpoint를 사용한다. 서명, 허용 algorithm, `
 
 ## 데이터베이스 변경 초안
 
-실제 migration SQL은 만들지 않는다. 기본안은 `users.auth_user_id UUID NULL`, nullable `UNIQUE` 제약과 인덱스이며, 같은 DB를 사용할 때 `auth.users(id)` 참조와 `ON DELETE SET NULL`을 검토한다. 기존 `places.owner_id`, `collections.owner_id` 외래키는 유지한다.
+1차 migration은 `users.auth_user_id UUID NULL`과 nullable `UNIQUE` 인덱스만 적용한다. 기존 `public.users.id`와 `places.owner_id`, `collections.owner_id` 외래키는 그대로 유지하며, 이번 단계에서는 `auth.users` 외래키를 추가하지 않는다. Supabase Auth 실제 연동 단계에서 권한, 격리 테스트 스키마, `ON DELETE SET NULL` 정책을 확인한 뒤 별도 migration으로 결정한다.
 
 대안은 `auth_account_links(app_user_id, auth_user_id, linked_at)` 테이블이다. 다중 연결과 이력에는 유연하지만 대표 계정 규칙, 중복 연결 방지, 삭제 정합성이 복잡하다. provider 정보는 Supabase `auth.identities`가 관리한다. provider 변경 이력이 필요하면 별도 감사 로그 테이블로 관리한다.
 
@@ -158,4 +158,4 @@ provider secret은 브라우저 코드나 Git 저장소에 넣지 않는다. Hos
 - 실제 계정 전환 시작일
 - 기존 비밀번호 로그인 종료일
 
-실제 인증 코드, migration SQL, package 설치, `.env` 생성, 키·비밀번호 요청은 이 문서 작업의 범위가 아니다.
+아직 `auth_user_id`를 실제 계정에 연결하는 HTTP API, OAuth, JWT, OTP, 프런트엔드 흐름은 활성화하지 않는다. 실제 인증 코드, 추가 migration SQL, package 설치, `.env` 생성, 키·비밀번호 요청은 이 문서 작업의 범위가 아니다.
