@@ -4,6 +4,14 @@
 
 한국 우선 출시 후 글로벌 확장을 고려한다. 초기 로그인 수단은 카카오, Google, Apple, 이메일 OTP이며 휴대폰 OTP와 네이버 로그인은 후속 단계다. 이 문서는 설계 문서이며 OAuth 키 설정, Supabase Auth 연결, 실제 로그인 코드 구현을 포함하지 않는다.
 
+## 현재 구현된 JWT 검증 기반과 비활성 범위
+
+서버에는 `jose`를 사용하는 Supabase JWT 검증 기반 코드가 추가되어 있다. 검증 대상 issuer와 JWKS는 신뢰된 `SUPABASE_URL`에서 파생된 주소만 사용하며, 허용 알고리즘은 `ES256`과 `RS256`이다. issuer, audience, `kid`, `exp`, `nbf`, `sub`, `role`을 검증하고 `HS256` JWT secret을 직접 검증하는 방식은 지원하지 않는다.
+
+Supabase JWT 환경설정이 전혀 없으면 기존 `yyj_session` 전용 모드로 동작한다. `Authorization: Bearer`가 있으면 JWT를 우선하며, JWT 검증 실패나 잘못된 Authorization 형식에서는 cookie로 fallback하지 않는다. JWT와 cookie가 서로 다른 public 사용자를 가리키면 요청을 거부한다. JWT의 `sub`는 `users.auth_user_id`로만 조회하며, 이메일을 이용한 자동 연결이나 public 사용자 자동 생성은 수행하지 않는다.
+
+현재 OAuth, OTP, 계정 연결 API, 프런트엔드의 JWT 전달은 비활성 상태다. 실제 운영 Supabase URL과 실제 access token 검증은 아직 수행하지 않았으므로 이 기반 구현을 로드맵 완료 상태로 표시하지 않는다.
+
 ## 현재 인증 구조
 
 - Node.js 서버가 자체 이메일/비밀번호 회원가입과 로그인을 처리한다.

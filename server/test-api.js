@@ -11,8 +11,13 @@ const realDataFile = path.join(__dirname, 'data', 'store.json');
 const realDataBefore = fs.readFileSync(realDataFile);
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'yeogiyeotji-test-'));
 const dataFile = path.join(temporaryDirectory, 'store.json');
+const childEnv = { ...process.env, PORT: String(port), DATA_FILE: dataFile, NODE_ENV: 'test' };
+delete childEnv.SUPABASE_URL;
+delete childEnv.SUPABASE_JWT_ISSUER;
+delete childEnv.SUPABASE_JWKS_URL;
+delete childEnv.SUPABASE_JWT_AUDIENCE;
 const child = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
-  env: { ...process.env, PORT: String(port), DATA_FILE: dataFile, NODE_ENV: 'test' },
+  env: childEnv,
   stdio: ['ignore', 'pipe', 'pipe']
 });
 
@@ -45,7 +50,7 @@ function createClient() {
 }
 
 const jsonOptions = (method, body) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /passwordHash|passwordSalt|sessionId|sessionToken|tokenHash/);
+const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /authUserId|jwt|claims|passwordHash|passwordSalt|sessionId|sessionToken|tokenHash|legacySessionToken/i);
 
 (async () => {
   const anonymous = createClient();
@@ -96,6 +101,15 @@ const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /passw
     const me = await loginClient('/api/auth/me');
     assert.equal(me.response.status, 200);
     assertNoSecrets(me.body);
+    const cookieOnly = await loginClient('/api/places');
+    assert.equal(cookieOnly.response.status, 200);
+    const malformedBearer = await loginClient('/api/places', { headers: { authorization: 'Bearer malformed-token' } });
+    assert.equal(malformedBearer.response.status, 401);
+    assert.equal(malformedBearer.body.error, 'jwt_auth_unavailable');
+    const basicAuth = await loginClient('/api/places', { headers: { authorization: 'Basic abc' } });
+    assert.equal(basicAuth.response.status, 401);
+    assert.equal(basicAuth.body.error, 'invalid_authorization');
+    assert.equal((await loginClient('/api/places')).response.status, 200);
     const logout = await loginClient('/api/auth/logout', jsonOptions('POST', {}));
     assert.equal(logout.response.status, 200);
     assert.equal(logout.body.ok, true);
