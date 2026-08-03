@@ -5,39 +5,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { URL } = require('node:url');
+const { createStorage } = require('./storage');
 
 const PORT = Number(process.env.PORT || 4100);
 const DATA_FILE = process.env.DATA_FILE ? path.resolve(process.env.DATA_FILE) : path.join(__dirname, 'data', 'store.json');
+const storage = createStorage({ dataFile: DATA_FILE });
 const WEB_ROOT = path.resolve(__dirname, '..', 'apps', 'web-prototype');
 const SESSION_COOKIE = 'yyj_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const sessions = new Map();
-
-function seed() {
-  return { schemaVersion: 2, users: [], collections: [], places: [] };
-}
-
-function loadStore() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    return {
-      ...parsed,
-      schemaVersion: 2,
-      users: Array.isArray(parsed.users) ? parsed.users : [],
-      places: Array.isArray(parsed.places) ? parsed.places : [],
-      collections: Array.isArray(parsed.collections) ? parsed.collections : []
-    };
-  } catch {
-    const data = seed();
-    saveStore(data);
-    return data;
-  }
-}
-
-function saveStore(store) {
-  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-  fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2));
-}
 
 function json(res, status, payload, headers = {}) {
   const body = status === 204 ? '' : JSON.stringify(payload);
@@ -90,7 +66,7 @@ function publicUser(user) {
   return { id: user.id, email: user.email, displayName: user.displayName };
 }
 
-function getAuthenticatedUser(req, store) {
+async function getAuthenticatedUser(req, storage) {
   const sessionId = parseCookies(req.headers.cookie)[SESSION_COOKIE];
   if (!sessionId) return null;
   const session = sessions.get(sessionId);
@@ -99,16 +75,16 @@ function getAuthenticatedUser(req, store) {
     sessions.delete(sessionId);
     return null;
   }
-  const user = store.users.find(item => item.id === session.userId && item.passwordHash && item.passwordSalt);
-  if (!user) {
+  const user = await storage.findUserById(session.userId);
+  if (!user || !user.passwordHash || !user.passwordSalt) {
     sessions.delete(sessionId);
     return null;
   }
   return { user, sessionId };
 }
 
-function requireUser(req, res, store) {
-  const auth = getAuthenticatedUser(req, store);
+async function requireUser(req, res, storage) {
+  const auth = await getAuthenticatedUser(req, storage);
   if (!auth) {
     authJson(res, 401, { error: 'unauthorized', message: '로그인이 필요합니다.' });
     return null;
@@ -204,18 +180,18 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname;
   try {
     if (!validateMutationRequest(req, url, res)) return;
-    const store = loadStore();
     if (pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, service: 'yeogiyeotji-api', time: new Date().toISOString() });
 
     if (pathname === '/api/auth/register' && req.method === 'POST') {
       const body = await readBody(req);
       const valid = validateRegistration(body);
       if (valid.error) return authJson(res, 400, { error: 'validation_error', message: valid.error });
-      if (store.users.some(user => normalizeEmail(user.email) === valid.email)) return authJson(res, 409, { error: 'email_exists', message: '이미 가입된 이메일입니다.' });
       const password = hashPassword(valid.password);
       const user = { id: crypto.randomUUID(), email: valid.email, displayName: valid.displayName, ...password, createdAt: new Date().toISOString() };
-      store.users.push(user);
-      saveStore(store);
+      try { await storage.createUser(user); } catch (error) {
+        if (error.code === 'EMAIL_EXISTS') return authJson(res, 409, { error: 'email_exists', message: '이미 가입된 이메일입니다.' });
+        throw error;
+      }
       const sessionId = createSession(user.id);
       return authJson(res, 201, { item: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, sessionId) });
     }
@@ -223,7 +199,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/auth/login' && req.method === 'POST') {
       const body = await readBody(req);
       const email = normalizeEmail(body.email);
-      const user = email ? store.users.find(item => normalizeEmail(item.email) === email && item.passwordHash && item.passwordSalt) : null;
+      const user = email ? await storage.findUserByEmail(email) : null;
       if (typeof body.password !== 'string' || !user || !verifyPassword(body.password, user)) return authJson(res, 401, { error: 'invalid_credentials', message: '이메일 또는 비밀번호가 올바르지 않습니다.' });
       const sessionId = createSession(user.id);
       return authJson(res, 200, { item: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, sessionId) });
@@ -236,74 +212,74 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/auth/me' && req.method === 'GET') {
-      const auth = requireUser(req, res, store);
+      const auth = await requireUser(req, res, storage);
       if (!auth) return;
       return authJson(res, 200, { item: publicUser(auth.user) });
     }
 
     if (pathname === '/api/places' && req.method === 'GET') {
-      const auth = requireUser(req, res, store); if (!auth) return;
+      const auth = await requireUser(req, res, storage); if (!auth) return;
       const category = url.searchParams.get('category');
       const query = (url.searchParams.get('q') || '').toLowerCase();
-      let items = store.places.filter(place => place.ownerId === auth.user.id);
+      let items = await storage.listPlaces(auth.user.id);
       if (category) items = items.filter(place => place.category === category);
       if (query) items = items.filter(place => [place.name, place.memo, ...(place.tags || [])].join(' ').toLowerCase().includes(query));
       return authJson(res, 200, { items });
     }
 
     if (pathname === '/api/places' && req.method === 'POST') {
-      const auth = requireUser(req, res, store); if (!auth) return;
+      const auth = await requireUser(req, res, storage); if (!auth) return;
       const body = await readBody(req);
       const errors = validatePlace(body);
-      if (body.collectionId && !store.collections.some(collection => collection.id === body.collectionId && collection.ownerId === auth.user.id)) errors.push('collectionId is not available');
+      if (body.collectionId && !(await storage.findCollectionById(auth.user.id, body.collectionId))) errors.push('collectionId is not available');
       if (errors.length) return json(res, 400, { error: 'validation_error', details: errors });
       const place = { id: crypto.randomUUID(), ownerId: auth.user.id, name: body.name.trim(), category: body.category.trim(), memo: String(body.memo || '').trim(), tags: Array.isArray(body.tags) ? body.tags.map(String) : [], visitedAt: body.visitedAt || new Date().toISOString().slice(0, 10), latitude: Number(body.latitude), longitude: Number(body.longitude), collectionId: body.collectionId || null, privacy: body.privacy || 'private', imageUrl: body.imageUrl || null, createdAt: new Date().toISOString() };
-      store.places.unshift(place); saveStore(store); return json(res, 201, { item: place });
+      await storage.createPlace(place); return json(res, 201, { item: place });
     }
 
     const placeMatch = pathname.match(/^\/api\/places\/([^/]+)$/);
     if (placeMatch && req.method === 'GET') {
-      const auth = requireUser(req, res, store); if (!auth) return;
-      const item = store.places.find(place => place.id === placeMatch[1] && place.ownerId === auth.user.id);
+      const auth = await requireUser(req, res, storage); if (!auth) return;
+      const item = await storage.findPlaceById(auth.user.id, placeMatch[1]);
       return item ? authJson(res, 200, { item }) : json(res, 404, { error: 'not_found' });
     }
     if (placeMatch && req.method === 'PUT') {
-      const auth = requireUser(req, res, store); if (!auth) return;
-      const index = store.places.findIndex(place => place.id === placeMatch[1] && place.ownerId === auth.user.id);
-      if (index < 0) return json(res, 404, { error: 'not_found' });
+      const auth = await requireUser(req, res, storage); if (!auth) return;
+      const current = await storage.findPlaceById(auth.user.id, placeMatch[1]);
+      if (!current) return json(res, 404, { error: 'not_found' });
       const body = await readBody(req);
-      const merged = { ...store.places[index], ...body, id: store.places[index].id, ownerId: auth.user.id };
+      const merged = { ...current, ...body, id: current.id, ownerId: auth.user.id };
       const errors = validatePlace(merged);
-      if (merged.collectionId && !store.collections.some(collection => collection.id === merged.collectionId && collection.ownerId === auth.user.id)) errors.push('collectionId is not available');
+      if (merged.collectionId && !(await storage.findCollectionById(auth.user.id, merged.collectionId))) errors.push('collectionId is not available');
       if (errors.length) return json(res, 400, { error: 'validation_error', details: errors });
-      store.places[index] = merged; saveStore(store); return json(res, 200, { item: merged });
+      const updated = await storage.updatePlace(auth.user.id, placeMatch[1], merged);
+      return updated ? json(res, 200, { item: updated }) : json(res, 404, { error: 'not_found' });
     }
     if (placeMatch && req.method === 'DELETE') {
-      const auth = requireUser(req, res, store); if (!auth) return;
-      const index = store.places.findIndex(place => place.id === placeMatch[1] && place.ownerId === auth.user.id);
-      if (index < 0) return json(res, 404, { error: 'not_found' });
-      store.places.splice(index, 1); saveStore(store); return json(res, 200, { ok: true });
+      const auth = await requireUser(req, res, storage); if (!auth) return;
+      const deleted = await storage.deletePlace(auth.user.id, placeMatch[1]);
+      return deleted ? json(res, 200, { ok: true }) : json(res, 404, { error: 'not_found' });
     }
 
     if (pathname === '/api/collections' && req.method === 'GET') {
-      const auth = requireUser(req, res, store); if (!auth) return;
-      return authJson(res, 200, { items: store.collections.filter(collection => collection.ownerId === auth.user.id) });
+      const auth = await requireUser(req, res, storage); if (!auth) return;
+      return authJson(res, 200, { items: await storage.listCollections(auth.user.id) });
     }
     if (pathname === '/api/collections' && req.method === 'POST') {
-      const auth = requireUser(req, res, store); if (!auth) return;
+      const auth = await requireUser(req, res, storage); if (!auth) return;
       const body = await readBody(req);
       if (typeof body.name !== 'string' || !body.name.trim()) return json(res, 400, { error: 'name_required', message: '컬렉션 이름을 입력해 주세요.' });
       if (body.name.trim().length > 60) return json(res, 400, { error: 'name_too_long', message: '컬렉션 이름은 60자까지 입력할 수 있습니다.' });
       if (!['private', 'link'].includes(body.privacy)) return json(res, 400, { error: 'invalid_privacy', message: '공개 범위를 확인해 주세요.' });
       const collection = { id: crypto.randomUUID(), ownerId: auth.user.id, name: body.name.trim(), privacy: body.privacy, shareToken: body.privacy === 'link' ? crypto.randomBytes(16).toString('hex') : null, createdAt: new Date().toISOString() };
-      store.collections.push(collection); saveStore(store); return json(res, 201, { item: collection });
+      await storage.createCollection(collection); return json(res, 201, { item: collection });
     }
 
     const shareMatch = pathname.match(/^\/api\/shared\/([^/]+)$/);
     if (shareMatch && req.method === 'GET') {
-      const collection = store.collections.find(item => item.shareToken === shareMatch[1] && item.privacy === 'link');
+      const collection = (await storage.initialize()).collections.find(item => item.shareToken === shareMatch[1] && item.privacy === 'link');
       if (!collection) return json(res, 404, { error: 'not_found' });
-      const places = store.places.filter(place => place.collectionId === collection.id && place.ownerId === collection.ownerId);
+      const places = (await storage.listPlaces(collection.ownerId)).filter(place => place.collectionId === collection.id);
       return json(res, 200, { collection: { id: collection.id, name: collection.name }, places });
     }
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'route_not_found' });
@@ -322,7 +298,10 @@ const cleanupTimer = setInterval(() => {
 }, 60 * 60 * 1000);
 cleanupTimer.unref();
 
-server.listen(PORT, '0.0.0.0', () => {
+storage.initialize().then(() => server.listen(PORT, '0.0.0.0', () => {
   console.log(`여기였지 API: http://localhost:${PORT}`);
   console.log(`웹 프로토타입: http://localhost:${PORT}/`);
+})).catch(error => {
+  console.error('Storage initialization failed:', error.message);
+  process.exitCode = 1;
 });
