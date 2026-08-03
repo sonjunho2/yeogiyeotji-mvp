@@ -3,13 +3,50 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createPool } = require('./pool');
+const { hashPassword } = require('../auth/password');
 
 function parseArgs(argv) {
   const fileIndex = argv.indexOf('--file');
   const modes = ['--dry-run', '--execute'].filter(flag => argv.includes(flag));
   if (modes.length !== 1) throw new Error('Use exactly one of --dry-run or --execute');
   if (fileIndex >= 0 && (!argv[fileIndex + 1] || argv[fileIndex + 1].startsWith('--'))) throw new Error('--file requires a path');
-  return { mode: modes[0].slice(2), file: fileIndex >= 0 ? argv[fileIndex + 1] : path.join(__dirname, '..', 'data', 'store.json') };
+  const recoveryIndex = argv.indexOf('--recover-user-index');
+  if (recoveryIndex >= 0 && (!/^\d+$/.test(argv[recoveryIndex + 1] || ''))) throw new Error('--recover-user-index requires a non-negative integer');
+  if (argv.includes('--password')) throw new Error('Unknown option: --password');
+  for (const arg of argv) if (!['--dry-run','--execute','--file','--recover-user-index'].includes(arg) && arg !== (fileIndex >= 0 ? argv[fileIndex + 1] : '') && arg !== (recoveryIndex >= 0 ? argv[recoveryIndex + 1] : '')) throw new Error(`Unknown option: ${arg}`);
+  return { mode: modes[0].slice(2), file: fileIndex >= 0 ? argv[fileIndex + 1] : path.join(__dirname, '..', 'data', 'store.json'), recoverUserIndex: recoveryIndex >= 0 ? Number(argv[recoveryIndex + 1]) : null };
+}
+
+function recoverLegacyUser(rawStore, { userIndex, password } = {}) {
+  if (!Number.isInteger(userIndex) || userIndex < 0 || userIndex >= rawStore.users.length) throw new Error('Invalid legacy user index');
+  if (typeof password !== 'string' || password.length < 8 || password.length > 128) throw new Error('Recovery password must be 8 to 128 characters');
+  const users = rawStore.users.map(user => ({ ...user }));
+  const legacy = users[userIndex];
+  if (!legacy || !legacy.id || !legacy.email || !(legacy.name || legacy.displayName) || !legacy.createdAt) throw new Error('Legacy user is missing required fields');
+  if (legacy.passwordHash || legacy.passwordSalt) throw new Error('Selected user already has authentication credentials');
+  const normalizedEmail = String(legacy.email).trim().toLowerCase();
+  if (users.some((user, index) => index !== userIndex && String(user.email || '').trim().toLowerCase() === normalizedEmail)) throw new Error('Recovery email conflicts with another user');
+  const generated = hashPassword(password);
+  users[userIndex] = { id: legacy.id, email: normalizedEmail, displayName: String(legacy.displayName || legacy.name).trim(), createdAt: legacy.createdAt, ...generated };
+  const ownerId = legacy.id;
+  const collections = rawStore.collections.map(item => {
+    if (item.ownerId && item.ownerId !== ownerId) return { ...item };
+    if (!item.ownerId && item.userId === ownerId) { const { userId, ...rest } = item; return { ...rest, ownerId }; }
+    if (item.ownerId === ownerId) return { ...item };
+    return { ...item };
+  });
+  const collectionIds = new Set(collections.filter(item => item.ownerId === ownerId).map(item => item.id));
+  const places = rawStore.places.map(item => {
+    if (item.ownerId && item.ownerId !== ownerId) return { ...item };
+    if (!item.ownerId && item.userId === ownerId) {
+      const { userId, ...rest } = item;
+      if (rest.collectionId && !collectionIds.has(rest.collectionId)) throw new Error('Legacy place collection owner conflict');
+      return { ...rest, ownerId };
+    }
+    if (item.ownerId === ownerId && item.collectionId && !collectionIds.has(item.collectionId)) throw new Error('Legacy place collection owner conflict');
+    return { ...item };
+  });
+  return { recoveredStore: { ...rawStore, users, collections, places }, summary: { recoveredUsers: 1, convertedCollections: collections.filter((item, index) => !rawStore.collections[index].ownerId && item.ownerId === ownerId).length, convertedPlaces: places.filter((item, index) => !rawStore.places[index].ownerId && item.ownerId === ownerId).length, rejectedRecords: 0 } };
 }
 
 async function readImportSource(filePath) {
@@ -72,7 +109,9 @@ async function executeImport({ pool, plan }) {
 
 async function main(argv = process.argv.slice(2), env = process.env) {
   const args = parseArgs(argv);
-  const plan = buildImportPlan(await readImportSource(args.file));
+  const source = await readImportSource(args.file);
+  const recovered = args.recoverUserIndex === null ? { recoveredStore: source } : recoverLegacyUser(source, { userIndex: args.recoverUserIndex, password: env.LEGACY_RECOVERY_PASSWORD });
+  const plan = buildImportPlan(recovered.recoveredStore);
   if (args.mode === 'dry-run') return summary(plan);
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required for --execute');
   const pool = createPool({ connectionString: env.DATABASE_URL });
@@ -80,4 +119,4 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 }
 
 if (require.main === module) main().then(result => console.log(JSON.stringify(result))).catch(error => { console.error(error.message); process.exitCode = 1; });
-module.exports = { parseArgs, readImportSource, buildImportPlan, executeImport, main };
+module.exports = { parseArgs, readImportSource, buildImportPlan, executeImport, recoverLegacyUser, main };

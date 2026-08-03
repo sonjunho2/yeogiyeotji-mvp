@@ -6,6 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { URL } = require('node:url');
 const { createStorage } = require('./storage');
+const { hashPassword, verifyPassword } = require('./auth/password');
 
 const PORT = Number(process.env.PORT || 4100);
 const DATA_FILE = process.env.DATA_FILE ? path.resolve(process.env.DATA_FILE) : path.join(__dirname, 'data', 'store.json');
@@ -103,20 +104,6 @@ function sessionCookie(req, sessionId, maxAge = SESSION_MAX_AGE_SECONDS) {
   const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
   const secure = process.env.NODE_ENV === 'production' || req.socket.encrypted || forwardedProtocol === 'https';
   return `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
-}
-
-function hashPassword(password, salt = crypto.randomBytes(16)) {
-  const passwordSalt = Buffer.isBuffer(salt) ? salt : Buffer.from(salt, 'hex');
-  const passwordHash = crypto.scryptSync(password, passwordSalt, 64);
-  return { passwordSalt: passwordSalt.toString('hex'), passwordHash: passwordHash.toString('hex') };
-}
-
-function verifyPassword(password, user) {
-  try {
-    const expected = Buffer.from(user.passwordHash, 'hex');
-    const actual = crypto.scryptSync(password, Buffer.from(user.passwordSalt, 'hex'), expected.length);
-    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
-  } catch { return false; }
 }
 
 function normalizeEmail(value) {
