@@ -17,26 +17,49 @@ function parseArgs(argv) {
   return { mode: modes[0].slice(2), file: fileIndex >= 0 ? argv[fileIndex + 1] : path.join(__dirname, '..', 'data', 'store.json'), recoverUserIndex: recoveryIndex >= 0 ? Number(argv[recoveryIndex + 1]) : null };
 }
 
+function validTimestamp(value) { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
+function earliestTimestamp(values) {
+  const valid = values.filter(validTimestamp);
+  return valid.length ? valid.slice().sort((a, b) => Date.parse(a) - Date.parse(b))[0] : null;
+}
+
 function recoverLegacyUser(rawStore, { userIndex, password } = {}) {
   if (!Number.isInteger(userIndex) || userIndex < 0 || userIndex >= rawStore.users.length) throw new Error('Invalid legacy user index');
   if (typeof password !== 'string' || password.length < 8 || password.length > 128) throw new Error('Recovery password must be 8 to 128 characters');
   const users = rawStore.users.map(user => ({ ...user }));
   const legacy = users[userIndex];
-  if (!legacy || !legacy.id || !legacy.email || !(legacy.name || legacy.displayName) || !legacy.createdAt) throw new Error('Legacy user is missing required fields');
-  if (legacy.passwordHash || legacy.passwordSalt) throw new Error('Selected user already has authentication credentials');
+  if (!legacy || !legacy.id || !legacy.email || !(legacy.name || legacy.displayName)) {
+    throw new Error('Legacy user is missing required fields');
+  }
+  if (legacy.passwordHash || legacy.passwordSalt) {
+    throw new Error('Selected user already has authentication credentials');
+  }
   const normalizedEmail = String(legacy.email).trim().toLowerCase();
   if (users.some((user, index) => index !== userIndex && String(user.email || '').trim().toLowerCase() === normalizedEmail)) throw new Error('Recovery email conflicts with another user');
+  const ownedCollections = rawStore.collections.filter(item => item && (item.ownerId === legacy.id || item.userId === legacy.id));
+  const ownedPlaces = rawStore.places.filter(item => item && (item.ownerId === legacy.id || item.userId === legacy.id));
+  const inferredUserTimestamp = !validTimestamp(legacy.createdAt);
+  const userCreatedAt = validTimestamp(legacy.createdAt) ? legacy.createdAt : earliestTimestamp([...ownedCollections.map(item => item.createdAt), ...ownedPlaces.map(item => item.createdAt)]);
+  if (!userCreatedAt) throw new Error('Legacy user is missing required fields');
   const generated = hashPassword(password);
-  users[userIndex] = { id: legacy.id, email: normalizedEmail, displayName: String(legacy.displayName || legacy.name).trim(), createdAt: legacy.createdAt, ...generated };
+  users[userIndex] = { id: legacy.id, email: normalizedEmail, displayName: String(legacy.displayName || legacy.name).trim(), createdAt: userCreatedAt, ...generated };
   const ownerId = legacy.id;
   const collections = rawStore.collections.map(item => {
+    if (item.ownerId && item.userId && item.ownerId !== item.userId) throw new Error('Collection ownerId/userId conflict');
     if (item.ownerId && item.ownerId !== ownerId) return { ...item };
     if (!item.ownerId && item.userId === ownerId) { const { userId, ...rest } = item; return { ...rest, ownerId }; }
     if (item.ownerId === ownerId) return { ...item };
     return { ...item };
   });
+  let inferredCollectionTimestamps = 0;
+  for (const item of collections.filter(item => item.ownerId === ownerId && !validTimestamp(item.createdAt))) {
+    const timestamps = rawStore.places.filter(place => place && place.collectionId === item.id && (place.ownerId === ownerId || place.userId === ownerId)).map(place => place.createdAt);
+    item.createdAt = earliestTimestamp(timestamps) || userCreatedAt;
+    inferredCollectionTimestamps += 1;
+  }
   const collectionIds = new Set(collections.filter(item => item.ownerId === ownerId).map(item => item.id));
   const places = rawStore.places.map(item => {
+    if (item.ownerId && item.userId && item.ownerId !== item.userId) throw new Error('Place ownerId/userId conflict');
     if (item.ownerId && item.ownerId !== ownerId) return { ...item };
     if (!item.ownerId && item.userId === ownerId) {
       const { userId, ...rest } = item;
@@ -46,7 +69,7 @@ function recoverLegacyUser(rawStore, { userIndex, password } = {}) {
     if (item.ownerId === ownerId && item.collectionId && !collectionIds.has(item.collectionId)) throw new Error('Legacy place collection owner conflict');
     return { ...item };
   });
-  return { recoveredStore: { ...rawStore, users, collections, places }, summary: { recoveredUsers: 1, convertedCollections: collections.filter((item, index) => !rawStore.collections[index].ownerId && item.ownerId === ownerId).length, convertedPlaces: places.filter((item, index) => !rawStore.places[index].ownerId && item.ownerId === ownerId).length, rejectedRecords: 0 } };
+  return { recoveredStore: { ...rawStore, users, collections, places }, summary: { recoveredUsers: 1, convertedCollections: collections.filter((item, index) => !rawStore.collections[index].ownerId && item.ownerId === ownerId).length, convertedPlaces: places.filter((item, index) => !rawStore.places[index].ownerId && item.ownerId === ownerId).length, inferredUserTimestamps: inferredUserTimestamp ? 1 : 0, inferredCollectionTimestamps, rejectedRecords: 0 } };
 }
 
 async function readImportSource(filePath) {
@@ -90,7 +113,7 @@ function summary(plan) {
   return { source: plan.source, importable: Object.fromEntries(Object.entries(plan.importable).map(([key, items]) => [key, items.length])), excluded: Object.fromEntries(Object.entries(plan.excluded).map(([key, items]) => [key, items.length])), excludedReasons: plan.excludedReasons };
 }
 
-async function executeImport({ pool, plan }) {
+async function executeImport({ pool, plan, recoverySummary = null }) {
   if (!pool) throw new Error('PostgreSQL pool is required for execute');
   const client = await pool.connect();
   try {
@@ -103,7 +126,8 @@ async function executeImport({ pool, plan }) {
     for (const item of plan.importable.collections) await client.query('INSERT INTO collections(id,owner_id,name,privacy,share_token,created_at) VALUES($1,$2,$3,$4,$5,$6)', [item.id,item.ownerId,item.name,item.privacy,item.shareToken || null,item.createdAt]);
     for (const item of plan.importable.places) await client.query('INSERT INTO places(id,owner_id,name,category,memo,tags,visited_at,latitude,longitude,collection_id,privacy,image_url,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)', [item.id,item.ownerId,item.name,item.category,item.memo,item.tags,item.visitedAt,item.latitude,item.longitude,item.collectionId,item.privacy,item.imageUrl,item.createdAt]);
     await client.query('COMMIT');
-    return summary(plan);
+    const result = summary(plan);
+    return recoverySummary ? { ...result, ...recoverySummary } : result;
   } catch (error) { try { await client.query('ROLLBACK'); } catch (_) {} throw error; } finally { client.release(); }
 }
 
@@ -112,10 +136,12 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   const source = await readImportSource(args.file);
   const recovered = args.recoverUserIndex === null ? { recoveredStore: source } : recoverLegacyUser(source, { userIndex: args.recoverUserIndex, password: env.LEGACY_RECOVERY_PASSWORD });
   const plan = buildImportPlan(recovered.recoveredStore);
-  if (args.mode === 'dry-run') return summary(plan);
+  const result = summary(plan);
+  if (args.recoverUserIndex !== null) Object.assign(result, recovered.summary);
+  if (args.mode === 'dry-run') return result;
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required for --execute');
   const pool = createPool({ connectionString: env.DATABASE_URL });
-  try { return await executeImport({ pool, plan }); } finally { await pool.end(); }
+  try { return await executeImport({ pool, plan, recoverySummary: args.recoverUserIndex === null ? null : recovered.summary }); } finally { await pool.end(); }
 }
 
 if (require.main === module) main().then(result => console.log(JSON.stringify(result))).catch(error => { console.error(error.message); process.exitCode = 1; });
