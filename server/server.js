@@ -100,9 +100,14 @@ function createSession(userId) {
   return sessionId;
 }
 
+function requestProtocol(req) {
+  const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  if (forwarded === 'http' || forwarded === 'https') return forwarded;
+  return req.socket.encrypted ? 'https' : 'http';
+}
+
 function sessionCookie(req, sessionId, maxAge = SESSION_MAX_AGE_SECONDS) {
-  const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  const secure = process.env.NODE_ENV === 'production' || req.socket.encrypted || forwardedProtocol === 'https';
+  const secure = process.env.NODE_ENV === 'production' || requestProtocol(req) === 'https';
   return `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
 }
 
@@ -163,7 +168,8 @@ function serveStatic(req, res, pathname) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const protocol = requestProtocol(req);
+  const url = new URL(req.url, `${protocol}://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
   try {
     if (!validateMutationRequest(req, url, res)) return;

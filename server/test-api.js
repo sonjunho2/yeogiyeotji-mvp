@@ -54,6 +54,23 @@ const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /passw
   try {
     await waitForServer();
 
+    const proxyRegister = await fetch(`${baseUrl}/api/auth/register`, {
+      ...jsonOptions('POST', { email: 'proxy@example.com', password: 'proxy-password', displayName: 'Proxy user' }),
+      headers: { 'content-type': 'application/json', origin: `https://127.0.0.1:${port}`, 'x-forwarded-proto': 'https' }
+    });
+    const proxyRegisterBody = await proxyRegister.json();
+    assert.equal(proxyRegister.status, 201);
+    assert.match(proxyRegister.headers.get('set-cookie'), /Secure/);
+    assertNoSecrets(proxyRegisterBody);
+
+    const blockedProxy = await fetch(`${baseUrl}/api/auth/register`, {
+      ...jsonOptions('POST', { email: 'blocked-proxy@example.com', password: 'proxy-password', displayName: 'Blocked proxy' }),
+      headers: { 'content-type': 'application/json', origin: 'https://example.com', 'x-forwarded-proto': 'https' }
+    });
+    const blockedProxyBody = await blockedProxy.json();
+    assert.equal(blockedProxy.status, 403);
+    assert.equal(blockedProxyBody.error, 'invalid_origin');
+
     const registerA = await userA('/api/auth/register', jsonOptions('POST', { email: ' A@Example.com ', password: 'password-A', displayName: ' 사용자 A ' }));
     assert.equal(registerA.response.status, 201);
     assert.deepEqual(registerA.body.item.email, 'a@example.com');
