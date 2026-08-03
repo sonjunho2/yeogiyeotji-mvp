@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const { createPool } = require('./db/pool');
 const { migrate } = require('./db/migrate');
 const { createPostgresStorage } = require('./storage/postgres-storage');
+const { buildImportPlan, executeImport } = require('./db/import-json');
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url) {
@@ -23,6 +24,10 @@ function expectArrayLength(name, actual, length) {
 }
 let adminPool;
 let testPool;
+let importPool;
+let importSchema;
+let rollbackPool;
+let rollbackSchema;
 
 (async () => {
   adminPool = createPool({ connectionString: url });
@@ -71,8 +76,47 @@ let testPool;
   expectValue('place delete after other owner', Boolean(await storage.findPlaceById(userA.id, deleteTarget.id)), 'true');
   expectValue('place delete', await storage.deletePlace(userA.id, deleteTarget.id), 'true');
   expectValue('place delete after owner', await storage.findPlaceById(userA.id, deleteTarget.id), 'null');
+
+  importSchema = `yyj_test_import_${crypto.randomBytes(8).toString('hex')}`;
+  await adminPool.query(`CREATE SCHEMA ${quoteIdentifier(importSchema)}`);
+  importPool = createPool({ connectionString: url, options: `-c search_path=${quoteIdentifier(importSchema)},pg_catalog` });
+  await migrate({ pool: importPool });
+  const importUser = { id: crypto.randomUUID(), email: 'import-a@example.com', displayName: 'Import A', passwordHash: 'hash', passwordSalt: 'salt', createdAt: new Date().toISOString() };
+  const importCollection = { id: crypto.randomUUID(), ownerId: importUser.id, name: 'Import collection', privacy: 'private', shareToken: null, createdAt: new Date().toISOString() };
+  const importPlace = { id: crypto.randomUUID(), ownerId: importUser.id, name: 'Import place', category: 'test', memo: '', tags: ['one', 'two'], visitedAt: '2026-08-03', latitude: 37, longitude: 127, collectionId: null, privacy: 'private', imageUrl: null, createdAt: new Date().toISOString() };
+  const importSource = { users: [importUser], collections: [importCollection], places: [importPlace] };
+  const importPlan = buildImportPlan(importSource);
+  const importResult = await executeImport({ pool: importPool, plan: importPlan });
+  if (importResult.importable.users !== 1 || importResult.importable.collections !== 1 || importResult.importable.places !== 1) throw new Error('import execute failed: expected importable counts 1,1,1');
+  async function counts(pool) { const result = await pool.query('SELECT (SELECT COUNT(*)::int FROM users) AS users, (SELECT COUNT(*)::int FROM collections) AS collections, (SELECT COUNT(*)::int FROM places) AS places'); return result.rows[0]; }
+  const firstCounts = await counts(importPool);
+  if (firstCounts.users !== 1 || firstCounts.collections !== 1 || firstCounts.places !== 1) throw new Error('import execute failed: expected row counts 1,1,1');
+  const importedUser = (await importPool.query('SELECT * FROM users WHERE id = $1', [importUser.id])).rows[0];
+  const importedCollection = (await importPool.query('SELECT * FROM collections WHERE id = $1', [importCollection.id])).rows[0];
+  const importedPlace = (await importPool.query('SELECT * FROM places WHERE id = $1', [importPlace.id])).rows[0];
+  if (!importedUser || importedUser.id !== importUser.id || importedUser.password_hash !== importUser.passwordHash || importedUser.password_salt !== importUser.passwordSalt || importedUser.created_at.toISOString() !== importUser.createdAt) throw new Error('import field preservation failed: expected user fields');
+  if (!importedCollection || importedCollection.id !== importCollection.id || importedCollection.owner_id !== importUser.id) throw new Error('import field preservation failed: expected collection fields');
+  if (!importedPlace || importedPlace.id !== importPlace.id || importedPlace.owner_id !== importUser.id || importedPlace.memo !== '' || importedPlace.collection_id !== null || importedPlace.image_url !== null || importedPlace.visited_at !== importPlace.visitedAt || JSON.stringify(importedPlace.tags) !== JSON.stringify(importPlace.tags)) throw new Error('import field preservation failed: expected place fields');
+  try { await executeImport({ pool: importPool, plan: importPlan }); throw new Error('import repeat protection failed: expected non-empty table rejection'); } catch (error) { if (error.message.startsWith('import repeat protection failed:')) throw error; }
+  const secondCounts = await counts(importPool);
+  if (JSON.stringify(firstCounts) !== JSON.stringify(secondCounts)) throw new Error('import repeat protection failed: expected unchanged row counts');
+
+  rollbackSchema = `yyj_test_${crypto.randomBytes(8).toString('hex')}`;
+  await adminPool.query(`CREATE SCHEMA ${quoteIdentifier(rollbackSchema)}`);
+  rollbackPool = createPool({ connectionString: url, options: `-c search_path=${quoteIdentifier(rollbackSchema)},pg_catalog` });
+  await migrate({ pool: rollbackPool });
+  const rollbackUser = { ...importUser, id: crypto.randomUUID(), email: 'rollback@example.com' };
+  const rollbackPlan = { importable: { users: [rollbackUser], collections: [{ ...importCollection, ownerId: rollbackUser.id }, { ...importCollection, ownerId: rollbackUser.id }], places: [] } };
+  try { await executeImport({ pool: rollbackPool, plan: rollbackPlan }); throw new Error('rollback test failed: expected constraint violation'); } catch (error) { if (error.message.startsWith('rollback test failed:')) throw error; }
+  const rollbackCounts = await counts(rollbackPool);
+  if (rollbackCounts.users !== 0 || rollbackCounts.collections !== 0 || rollbackCounts.places !== 0) throw new Error('rollback test failed: expected row counts 0,0,0');
+  await rollbackPool.query('SELECT 1');
   console.log('PostgreSQL tests passed: isolated schema, migration, CRUD, ownership, and duplicate-email behavior');
 })().catch(error => { console.error(`PostgreSQL tests failed: ${error.message}`); process.exitCode = 1; }).finally(async () => {
+  if (rollbackPool) await rollbackPool.end();
+  if (adminPool && rollbackSchema) { try { await adminPool.query(`DROP SCHEMA ${quoteIdentifier(rollbackSchema)} CASCADE`); } catch (_) {} }
+  if (importPool) await importPool.end();
+  if (adminPool && importSchema) { try { await adminPool.query(`DROP SCHEMA ${quoteIdentifier(importSchema)} CASCADE`); } catch (_) {} }
   if (testPool) await testPool.end();
   if (adminPool) { try { await adminPool.query(`DROP SCHEMA ${quoteIdentifier(schema)} CASCADE`); } finally { await adminPool.end(); } }
 });
