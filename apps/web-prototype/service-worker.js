@@ -1,4 +1,4 @@
-const CACHE = 'yeogiyeotji-v5';
+const CACHE = 'yeogiyeotji-v6';
 const ASSETS = ['./', './index.html', './styles.css', './data-store.js', './app.js', './manifest.json'];
 
 self.addEventListener('install', event => {

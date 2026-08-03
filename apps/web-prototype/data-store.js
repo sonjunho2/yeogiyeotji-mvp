@@ -17,7 +17,7 @@
     }
   }
 
-  const isLocalServerOrigin = () => location.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(location.hostname);
+  const isServerCapableOrigin = () => ['http:', 'https:'].includes(location.protocol);
 
   function readLocal(key, fallbackValue) {
     try {
@@ -99,13 +99,13 @@
   }
 
   async function checkServer() {
-    if (!isLocalServerOrigin()) return false;
+    if (!isServerCapableOrigin()) return false;
     const result = await request('/api/health');
     return result.ok === true;
   }
 
   async function initialize(seedPlaces, seedCollections) {
-    if (isLocalServerOrigin()) {
+    if (isServerCapableOrigin()) {
       try {
         if (!await checkServer()) throw new Error('서버 상태를 확인할 수 없습니다.');
         mode = 'server';
