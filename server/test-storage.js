@@ -27,7 +27,7 @@ const { createStorage } = require('./storage');
     assert.equal((await storage.updatePlace('u1', place.id, { name: 'Updated' })).name, 'Updated');
     assert.equal(await storage.deletePlace('u2', place.id), false);
     assert.equal(await storage.deletePlace('u1', place.id), true);
-    assert.throws(() => createStorage({ driver: 'postgres', dataFile: file }), /Unsupported STORAGE_DRIVER/);
+    assert.throws(() => createStorage({ driver: 'postgres', dataFile: file }), /DATABASE_URL is required/);
     fs.writeFileSync(file, '{ broken');
     assert.deepEqual(await storage.load(), { schemaVersion: 2, users: [], collections: [], places: [] });
     console.log('Storage tests passed: initialization, persistence, isolation, driver validation, and recovery');
