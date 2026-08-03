@@ -14,7 +14,6 @@ const storage = createStorage({ dataFile: DATA_FILE });
 const WEB_ROOT = path.resolve(__dirname, '..', 'apps', 'web-prototype');
 const SESSION_COOKIE = 'yyj_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
-const sessions = new Map();
 
 function json(res, status, payload, headers = {}) {
   const body = status === 204 ? '' : JSON.stringify(payload);
@@ -68,20 +67,21 @@ function publicUser(user) {
 }
 
 async function getAuthenticatedUser(req, storage) {
-  const sessionId = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-  if (!sessionId) return null;
-  const session = sessions.get(sessionId);
+  const sessionToken = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+  if (!sessionToken) return null;
+  const tokenHash = crypto.createHash('sha256').update(sessionToken).digest('hex');
+  const session = await storage.findSessionByTokenHash(tokenHash);
   if (!session) return null;
-  if (session.expiresAt <= Date.now()) {
-    sessions.delete(sessionId);
+  if (Date.parse(session.expiresAt) <= Date.now()) {
+    await storage.deleteSession(tokenHash);
     return null;
   }
   const user = await storage.findUserById(session.userId);
   if (!user || !user.passwordHash || !user.passwordSalt) {
-    sessions.delete(sessionId);
+    await storage.deleteSession(tokenHash);
     return null;
   }
-  return { user, sessionId };
+  return { user, sessionToken };
 }
 
 async function requireUser(req, res, storage) {
@@ -93,11 +93,13 @@ async function requireUser(req, res, storage) {
   return auth;
 }
 
-function createSession(userId) {
-  const sessionId = crypto.randomBytes(32).toString('base64url');
-  const createdAt = Date.now();
-  sessions.set(sessionId, { userId, createdAt, expiresAt: createdAt + SESSION_MAX_AGE_SECONDS * 1000 });
-  return sessionId;
+async function createSession(storage, userId) {
+  const sessionToken = crypto.randomBytes(32).toString('base64url');
+  const createdAt = new Date();
+  const now = createdAt.toISOString();
+  await storage.deleteExpiredSessions(now);
+  await storage.createSession({ tokenHash: crypto.createHash('sha256').update(sessionToken).digest('hex'), userId, createdAt: now, expiresAt: new Date(createdAt.getTime() + SESSION_MAX_AGE_SECONDS * 1000).toISOString() });
+  return sessionToken;
 }
 
 function requestProtocol(req) {
@@ -185,8 +187,8 @@ const server = http.createServer(async (req, res) => {
         if (error.code === 'EMAIL_EXISTS') return authJson(res, 409, { error: 'email_exists', message: '이미 가입된 이메일입니다.' });
         throw error;
       }
-      const sessionId = createSession(user.id);
-      return authJson(res, 201, { item: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, sessionId) });
+      const sessionToken = await createSession(storage, user.id);
+      return authJson(res, 201, { item: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, sessionToken) });
     }
 
     if (pathname === '/api/auth/login' && req.method === 'POST') {
@@ -194,13 +196,13 @@ const server = http.createServer(async (req, res) => {
       const email = normalizeEmail(body.email);
       const user = email ? await storage.findUserByEmail(email) : null;
       if (typeof body.password !== 'string' || !user || !verifyPassword(body.password, user)) return authJson(res, 401, { error: 'invalid_credentials', message: '이메일 또는 비밀번호가 올바르지 않습니다.' });
-      const sessionId = createSession(user.id);
-      return authJson(res, 200, { item: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, sessionId) });
+      const sessionToken = await createSession(storage, user.id);
+      return authJson(res, 200, { item: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, sessionToken) });
     }
 
     if (pathname === '/api/auth/logout' && req.method === 'POST') {
       const sessionId = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-      if (sessionId) sessions.delete(sessionId);
+      if (sessionId) await storage.deleteSession(crypto.createHash('sha256').update(sessionId).digest('hex'));
       return authJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
     }
 
@@ -285,10 +287,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const cleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [sessionId, session] of sessions) if (session.expiresAt <= now) sessions.delete(sessionId);
-}, 60 * 60 * 1000);
+const cleanupTimer = setInterval(() => storage.deleteExpiredSessions(new Date().toISOString()).catch(() => {}), 60 * 60 * 1000);
 cleanupTimer.unref();
 
 storage.initialize().then(() => server.listen(PORT, '0.0.0.0', () => {

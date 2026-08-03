@@ -1,5 +1,6 @@
 'use strict';
 
+const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { createPool } = require('./db/pool');
 const { migrate } = require('./db/migrate');
@@ -43,6 +44,39 @@ let rollbackSchema;
   const userB = { id: crypto.randomUUID(), email: 'pg-b@example.com', displayName: 'B', passwordSalt: 'salt', passwordHash: 'hash', createdAt: new Date().toISOString() };
   await storage.createUser(userA);
   await storage.createUser(userB);
+  assert.ok((await testPool.query("SELECT to_regclass('sessions') AS sessions")).rows[0].sessions);
+  const originalTokenA = 'postgres-session-original-token-a';
+  const sessionTokenHashA = crypto.createHash('sha256').update(originalTokenA).digest('hex');
+  const session = { tokenHash: sessionTokenHashA, userId: userA.id, createdAt: '2026-01-01T00:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z' };
+  await storage.createSession(session);
+  assert.deepEqual(await storage.findSessionByTokenHash(sessionTokenHashA), session);
+  const storedSession = (await testPool.query('SELECT * FROM sessions WHERE token_hash = $1', [sessionTokenHashA])).rows[0];
+  assert.equal(storedSession.token_hash, sessionTokenHashA);
+  assert.equal(JSON.stringify(storedSession).includes(originalTokenA), false);
+  const restartedStorage = createPostgresStorage({ pool: testPool });
+  assert.deepEqual(await restartedStorage.findSessionByTokenHash(sessionTokenHashA), session);
+  assert.equal(await storage.findSessionByTokenHash(crypto.createHash('sha256').update('other-token').digest('hex')), null);
+  const originalTokenB = 'postgres-session-original-token-b';
+  const sessionTokenHashB = crypto.createHash('sha256').update(originalTokenB).digest('hex');
+  await storage.createSession({ ...session, tokenHash: sessionTokenHashB, userId: userB.id });
+  assert.equal((await storage.findSessionByTokenHash(sessionTokenHashA)).userId, userA.id);
+  assert.equal((await storage.findSessionByTokenHash(sessionTokenHashB)).userId, userB.id);
+  const expiredHash = crypto.createHash('sha256').update('expired-session').digest('hex');
+  const validHash = crypto.createHash('sha256').update('valid-session').digest('hex');
+  await storage.createSession({ ...session, tokenHash: expiredHash, expiresAt: '2020-01-01T00:00:00.000Z' });
+  await storage.createSession({ ...session, tokenHash: validHash, expiresAt: '2099-01-01T00:00:00.000Z' });
+  assert.equal(await storage.deleteExpiredSessions('2026-01-01T00:00:00.000Z'), 1);
+  assert.equal(await storage.findSessionByTokenHash(expiredHash), null);
+  assert.ok(await storage.findSessionByTokenHash(validHash));
+  assert.equal(await storage.deleteSession(sessionTokenHashA), true);
+  assert.equal(await storage.deleteSession(sessionTokenHashA), false);
+  assert.equal(await storage.findSessionByTokenHash(sessionTokenHashA), null);
+  const cascadeUser = { id: crypto.randomUUID(), email: 'pg-cascade@example.com', displayName: 'Cascade', passwordSalt: 'salt', passwordHash: 'hash', createdAt: new Date().toISOString() };
+  await storage.createUser(cascadeUser);
+  const cascadeHash = crypto.createHash('sha256').update('cascade-session').digest('hex');
+  await storage.createSession({ ...session, tokenHash: cascadeHash, userId: cascadeUser.id });
+  await testPool.query('DELETE FROM users WHERE id = $1', [cascadeUser.id]);
+  assert.equal(await storage.findSessionByTokenHash(cascadeHash), null);
   if ((await storage.findUserByEmail(userA.email)).id !== userA.id) throw new Error('findUserByEmail failed');
   try { await storage.createUser({ ...userA, id: crypto.randomUUID() }); throw new Error('duplicate email was accepted'); } catch (error) { if (error.code !== 'EMAIL_EXISTS') throw error; }
 
