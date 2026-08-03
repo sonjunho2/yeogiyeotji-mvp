@@ -20,6 +20,7 @@ function normalizeStore(parsed) {
 function createJsonStorage(dataFile) {
   let writeQueue = Promise.resolve();
   let mutationQueue = Promise.resolve();
+  const sessions = new Map();
   const clone = value => JSON.parse(JSON.stringify(value));
 
   async function loadRaw() {
@@ -63,7 +64,7 @@ function createJsonStorage(dataFile) {
   };
 
   const methods = {
-    initialize: load,
+    initialize: async () => { const data = await load(); await methods.deleteExpiredSessions(new Date().toISOString()); return data; },
     findUserById: async userId => (await load()).users.find(user => user.id === userId) || null,
     findUserByEmail: async email => (await load()).users.find(user => user.email === email) || null,
     createUser: user => mutate(data => {
@@ -92,7 +93,11 @@ function createJsonStorage(dataFile) {
       if (index < 0) return false;
       data.places.splice(index, 1);
       return true;
-    })
+    }),
+    createSession: async session => { sessions.set(session.tokenHash, { ...session }); return { ...session }; },
+    findSessionByTokenHash: async tokenHash => { const session = sessions.get(tokenHash); return session ? { ...session } : null; },
+    deleteSession: async tokenHash => sessions.delete(tokenHash),
+    deleteExpiredSessions: async now => { let count = 0; for (const [hash, session] of sessions) if (new Date(session.expiresAt) <= new Date(now)) { sessions.delete(hash); count += 1; } return count; }
   };
 
   return { load, save, ...methods };

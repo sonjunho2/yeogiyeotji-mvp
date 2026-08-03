@@ -45,7 +45,7 @@ function createClient() {
 }
 
 const jsonOptions = (method, body) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /passwordHash|passwordSalt|sessionId/);
+const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /passwordHash|passwordSalt|sessionId|sessionToken|tokenHash/);
 
 (async () => {
   const anonymous = createClient();
