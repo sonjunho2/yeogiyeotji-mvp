@@ -1,5 +1,5 @@
-const CACHE = 'yeogiyeotji-v7';
-const ASSETS = ['./', './index.html', './styles.css', './supabase-auth.js', './data-store.js', './app.js', './manifest.json'];
+const CACHE = 'yeogiyeotji-v8';
+const ASSETS = ['./', './index.html', './styles.css', './supabase-auth.js', './data-store.js', './auth-controller.js', './app.js', './manifest.json'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

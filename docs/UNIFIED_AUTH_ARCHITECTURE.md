@@ -1,8 +1,20 @@
 # 통합 인증 아키텍처
 
+## 4-2 이메일 OTP 클라이언트 기반
+
+- `SUPABASE_EMAIL_OTP_ENABLED`는 기본값이 false이며 true일 때만 OTP UI를 노출한다.
+- Supabase Dashboard 이메일 템플릿은 `{{ .Token }}`을 사용하며 6자리 코드 방식만 지원한다.
+- `shouldCreateUser: false`로 요청하며 Magic Link와 OAuth는 비활성화한다.
+- `auth.users`, `public.users`, `auth_user_id`는 자동 생성·자동 연결하지 않는다. 미연결은 `auth_user_not_linked`, 충돌은 `auth_identity_conflict`로 처리한다.
+- 기존 이메일/비밀번호 로그인과 `yyj_session`을 유지한다.
+- OTP 코드, access token, refresh token은 저장하거나 로그에 기록하지 않는다.
+- Google·카카오·Apple 로그인은 후속 단계다. 운영 플래그 활성화와 실제 이메일 전송 검증은 수행하지 않았으며 통합 인증 로드맵 완료 상태가 아니다.
+
+4-2 이메일 OTP 클라이언트는 `SUPABASE_EMAIL_OTP_ENABLED=true`일 때만 활성화한다. `shouldCreateUser: false`를 사용하며 Magic Link, OAuth, 신규 사용자 자동 생성, service-role 사용은 포함하지 않는다.
+
 ## 1차 클라이언트 기반 구현 상태
 
-브라우저는 서버의 `GET /api/auth/config`에서 `SUPABASE_PUBLISHABLE_KEY`와 `SUPABASE_URL`만 받아 Supabase JS client를 초기화한다. access token이 있는 보호 API 요청에는 `Authorization: Bearer`를 추가하고, 토큰이 없을 때는 기존 `yyj_session` 쿠키 인증을 유지한다. Supabase 인증 UI와 실제 계정 연동은 아직 구현하지 않았다.
+브라우저는 서버의 `GET /api/auth/config`에서 `SUPABASE_PUBLISHABLE_KEY`와 `SUPABASE_URL`만 받아 Supabase JS client를 초기화한다. access token이 있는 보호 API 요청에는 `Authorization: Bearer`를 추가하고, 토큰이 없을 때는 기존 `yyj_session` 쿠키 인증을 유지한다. 이메일 OTP UI 기반은 구현했지만 기존 계정과의 자동 연결과 신규 Supabase Auth 사용자 생성은 구현하지 않았다.
 
 공개 설정 오류는 고정된 `PUBLIC_SUPABASE_CONFIG_ERROR`로 처리하며 입력값을 오류 메시지에 포함하지 않는다. Supabase 상태 조회 오류는 `SUPABASE_AUTH_STATE_ERROR`로 구분하여 브라우저 저장소 fallback으로 변환하지 않는다. 로그아웃은 서버 쿠키와 Supabase 세션 정리를 모두 시도하고, 어느 한쪽이라도 실패하면 실패를 반환한다.
 

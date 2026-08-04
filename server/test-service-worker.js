@@ -40,16 +40,17 @@ async function runEvent(handler) {
 (async () => {
   const install = loadWorker();
   await runEvent(install.listeners.install);
-  assert.deepEqual(install.calls.opened, ['yeogiyeotji-v7']);
+  assert.deepEqual(install.calls.opened, ['yeogiyeotji-v8']);
   assert.equal(install.calls.added.length, 1);
   assert.ok(install.calls.added[0].includes('./data-store.js'));
   assert.ok(install.calls.added[0].includes('./supabase-auth.js'));
+  assert.ok(install.calls.added[0].includes('./auth-controller.js'));
   assert.equal(install.calls.skipWaiting, 1);
 
-  const activate = loadWorker(['yeogiyeotji-v6', 'yeogiyeotji-v7', 'unrelated-old-cache']);
+  const activate = loadWorker(['yeogiyeotji-v6', 'yeogiyeotji-v7', 'yeogiyeotji-v8', 'unrelated-old-cache']);
   await runEvent(activate.listeners.activate);
-  assert.deepEqual(activate.calls.deleted.sort(), ['unrelated-old-cache', 'yeogiyeotji-v6']);
-  assert.equal(activate.calls.deleted.includes('yeogiyeotji-v7'), false);
+  assert.deepEqual(activate.calls.deleted.sort(), ['unrelated-old-cache', 'yeogiyeotji-v6', 'yeogiyeotji-v7']);
+  assert.equal(activate.calls.deleted.includes('yeogiyeotji-v8'), false);
   assert.equal(activate.calls.claim, 1);
 
   const worker = loadWorker();
@@ -60,5 +61,5 @@ async function runEvent(handler) {
   worker.listeners.fetch({ request: { method: 'POST', url: 'https://example.test/app.js' }, respondWith: () => { responded += 1; } });
   assert.equal(responded, 1);
 
-  console.log('Service worker tests passed: v7 assets, stale cache cleanup, and fetch exclusions');
+  console.log('Service worker tests passed: v8 assets, stale cache cleanup, and fetch exclusions');
 })().catch(error => { console.error(`Service worker tests failed: ${error.message}`); process.exitCode = 1; });

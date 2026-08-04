@@ -13,6 +13,7 @@ const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'yeogiyeotji-te
 const dataFile = path.join(temporaryDirectory, 'store.json');
 const childEnv = { ...process.env, PORT: String(port), DATA_FILE: dataFile, NODE_ENV: 'test' };
 delete childEnv.SUPABASE_URL;
+delete childEnv.SUPABASE_EMAIL_OTP_ENABLED;
 delete childEnv.SUPABASE_PUBLISHABLE_KEY;
 delete childEnv.SUPABASE_JWT_ISSUER;
 delete childEnv.SUPABASE_JWKS_URL;
@@ -64,7 +65,7 @@ const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /authU
     assert.equal(authConfig.status, 200);
     assert.equal(authConfig.headers.get('cache-control'), 'no-store');
     const authConfigBody = await authConfig.json();
-    assert.deepEqual(authConfigBody, { item: { enabled: false } });
+    assert.deepEqual(authConfigBody, { item: { enabled: false, emailOtpEnabled: false } });
     assert.doesNotMatch(JSON.stringify(authConfigBody), /secret|serviceRole|service_role|processEnv|process\.env/i);
     const postConfig = await fetch(`${baseUrl}/api/auth/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     assert.notEqual(postConfig.status, 200);
@@ -170,7 +171,7 @@ const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /authU
     assert.equal(index.status, 200);
     assert.match(index.headers.get('content-type'), /^text\/html/);
     assert.match(await index.text(), /<title>여기였지<\/title>/);
-    for (const asset of ['styles.css', 'data-store.js', 'app.js', 'service-worker.js', 'manifest.json']) {
+    for (const asset of ['styles.css', 'supabase-auth.js', 'data-store.js', 'auth-controller.js', 'app.js', 'service-worker.js', 'manifest.json']) {
       assert.equal((await fetch(`${baseUrl}/${asset}`)).status, 200, `${asset} 정적 경로`);
     }
 

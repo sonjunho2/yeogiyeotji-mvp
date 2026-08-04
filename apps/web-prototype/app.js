@@ -28,12 +28,25 @@ const state = {
   savingCollection: false,
   deletingPlace: false,
   user: null,
-  authMode: 'login'
 };
 
 const $ = selector => document.querySelector(selector);
 const view = $('#view');
 const DEFAULT_CENTER = [36.35, 127.85];
+let authController = null;
+let authViewState = { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' };
+
+function completeAuthentication(user, places, collections) {
+  state.user = user; state.places = places; state.collections = collections; state.selectedId = places[0]?.id || ''; state.tab = 'map';
+  document.body.classList.remove('auth-visible'); syncNav(); render();
+}
+
+function ensureAuthController() {
+  if (authController) return authController;
+  authController = window.YYJAuthController.create({ supabaseAuth: YYJSupabaseAuth, dataStore: YYJDataStore, onChange: snapshot => { authViewState = { ...snapshot }; if (document.body.classList.contains('auth-visible')) renderAuth(); }, onAuthenticated: completeAuthentication });
+  authViewState = authController.getState();
+  return authController;
+}
 
 function toast(message) {
   const old = document.querySelector('.toast');
@@ -65,11 +78,17 @@ function handleAuthenticationError(error) {
 }
 
 function renderAuth() {
+  const mode = authViewState.mode;
+  if (mode === 'otp-request' || mode === 'otp-verify') return renderOtpAuth();
+  if (mode === 'otp-unlinked' || mode === 'otp-conflict') return renderOtpIssue();
   document.body.classList.add('auth-visible');
-  const registering = state.authMode === 'register';
+  const registering = mode === 'register';
   setHeader('여기였지', '내 장소를 안전하게 기억하기');
   view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${registering ? '회원가입' : '로그인'}</h2><p>${registering ? '나만의 장소와 컬렉션을 시작하세요.' : '저장한 장소를 다시 만나보세요.'}</p><form id="authForm">${registering ? '<label class="field"><span>표시 이름</span><input id="authDisplayName" autocomplete="name" maxlength="40" required /></label>' : ''}<label class="field"><span>이메일</span><input id="authEmail" type="email" autocomplete="email" maxlength="254" required /></label><label class="field"><span>비밀번호</span><input id="authPassword" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" minlength="8" maxlength="128" required /></label><p id="authError" class="auth-error" role="alert"></p><button class="primary full" type="submit">${registering ? '가입하기' : '로그인'}</button></form><button id="authSwitch" class="auth-switch" type="button">${registering ? '이미 계정이 있나요? 로그인' : '처음이신가요? 회원가입'}</button></div></section>`;
-  $('#authSwitch').onclick = () => { state.authMode = registering ? 'login' : 'register'; renderAuth(); };
+  $('#authSwitch').onclick = () => ensureAuthController().setMode(registering ? 'login' : 'register');
+  if (YYJSupabaseAuth.isEmailOtpEnabled() && !registering) {
+    const otpButton = document.createElement('button'); otpButton.type = 'button'; otpButton.className = 'secondary full'; otpButton.textContent = '이메일 인증코드로 로그인'; otpButton.onclick = () => ensureAuthController().setMode('otp-request'); $('#authForm').after(otpButton);
+  }
   $('#authForm').onsubmit = async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector('[type=submit]');
@@ -82,19 +101,30 @@ function renderAuth() {
       if (registering) credentials.displayName = $('#authDisplayName').value;
       state.user = registering ? await YYJDataStore.register(credentials) : await YYJDataStore.login(credentials);
       const loaded = await YYJDataStore.loadServerData();
-      state.places = loaded.places;
-      state.collections = loaded.collections;
-      state.selectedId = state.places[0]?.id || '';
-      state.tab = 'map';
-      document.body.classList.remove('auth-visible');
-      syncNav();
-      render();
+      completeAuthentication(state.user, loaded.places, loaded.collections);
     } catch (error) {
       errorBox.textContent = error.message || '요청을 처리하지 못했습니다.';
       button.disabled = false;
       button.textContent = registering ? '가입하기' : '로그인';
     }
   };
+}
+
+function renderOtpAuth() {
+  document.body.classList.add('auth-visible'); setHeader('여기였지', '이메일 인증');
+  const controller = ensureAuthController(); const snapshot = authViewState; const verify = snapshot.mode === 'otp-verify';
+  const emailField = verify ? '' : `<label class="field"><span>이메일</span><input id="otpEmail" type="email" autocomplete="email" maxlength="254" required ${snapshot.pending ? 'disabled' : ''} /></label>`;
+  view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${verify ? '인증번호 확인' : '이메일 인증 로그인'}</h2><p>${verify ? '이메일로 받은 인증번호를 입력하세요.' : '가입된 이메일로 인증번호를 보내드립니다.'}</p>${snapshot.notice ? `<p class="auth-notice">${esc(snapshot.notice)}</p>` : ''}${verify ? `<p class="otp-email">전송한 이메일: ${esc(snapshot.otpEmail)}</p>` : ''}<form id="otpForm">${emailField}${verify ? `<label class="field"><span>인증번호</span><input id="otpToken" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required ${snapshot.pending ? 'disabled' : ''} /></label>` : ''}<p id="authError" class="auth-error" role="alert">${esc(snapshot.error || '')}</p><div class="auth-actions"><button class="primary full" type="submit" ${snapshot.pending ? 'disabled' : ''}>${snapshot.pending ? '처리 중…' : verify ? '인증번호 확인' : '인증번호 받기'}</button>${verify ? `<button id="otpResend" class="secondary full" type="button" ${snapshot.pending ? 'disabled' : ''}>인증번호 다시 보내기</button>` : ''}<button id="otpCancel" class="auth-switch" type="button" ${snapshot.pending ? 'disabled' : ''}>비밀번호 로그인으로 돌아가기</button></div></form></div></section>`;
+  $('#otpForm').onsubmit = event => { event.preventDefault(); if (verify) controller.verifyOtp($('#otpToken').value); else controller.requestOtp($('#otpEmail').value); };
+  if ($('#otpResend')) $('#otpResend').onclick = () => controller.resendOtp();
+  $('#otpCancel').onclick = () => controller.cancelOtp();
+}
+
+function renderOtpIssue() {
+  document.body.classList.add('auth-visible'); setHeader('여기였지', '인증 안내');
+  const snapshot = authViewState; const conflict = snapshot.mode === 'otp-conflict';
+  view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${conflict ? '인증 계정 충돌' : '계정 연결 필요'}</h2><p class="auth-issue">${esc(snapshot.error || '')}</p><div class="auth-actions"><button id="otpIssueCancel" class="primary full" type="button" ${snapshot.pending ? 'disabled' : ''}>${conflict ? '이메일 인증 종료 후 다시 시도' : '비밀번호 로그인으로 돌아가기'}</button></div></div></section>`;
+  const controller = ensureAuthController(); $('#otpIssueCancel').onclick = () => controller.cancelOtp();
 }
 
 function esc(value = '') {
@@ -604,7 +634,7 @@ $('#profileButton').onclick = () => {
     try { await YYJDataStore.logout(); } catch (error) { console.error('로그아웃 요청 실패', error); }
     settingsDialog.close();
     clearPrivateState();
-    state.authMode = 'login';
+    ensureAuthController().setMode('login');
     renderAuth();
   };
 };
@@ -624,6 +654,9 @@ async function initializeApp() {
     if (loaded.fallback) toast('서버 연결 실패 — 브라우저 저장으로 전환했습니다.');
     if (loaded.authRequired) {
       clearPrivateState();
+      if (loaded.authIssue === 'auth_user_not_linked' || loaded.authIssue === 'auth_identity_conflict') {
+        ensureAuthController().handleInitialIssue(loaded.authIssue);
+      }
       renderAuth();
       return;
     }

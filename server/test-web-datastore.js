@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const source = fs.readFileSync('apps/web-prototype/data-store.js', 'utf8');
+const plain = value => JSON.parse(JSON.stringify(value));
 
 function createContext(location, responses, auth = {}) {
   const values = new Map();
@@ -13,7 +14,8 @@ function createContext(location, responses, auth = {}) {
   const fetch = async (path, options) => {
     calls.push(path);
     optionsLog.push({ path, options });
-    const response = responses[path];
+    const queued = responses[path]; const response = Array.isArray(queued) ? queued.shift() : queued;
+    if (!response) throw new Error(`TEST_RESPONSE_MISSING:${path}`);
     if (response instanceof Error) throw response;
     return { ok: response.ok, status: response.status, text: async () => response.body };
   };
@@ -28,9 +30,13 @@ function createContext(location, responses, auth = {}) {
     AbortController,
     console: { error: () => {} }
   };
-  context.window.YYJSupabaseAuth = { initialize: () => {}, getAccessToken: auth.getAccessToken || (async () => null), signOut: auth.signOut || (async () => {}) };
+  let initializedConfig = null;
+  let initializeCalls = 0;
+  let accessTokenCount = 0;
+  let signOutCount = 0;
+  context.window.YYJSupabaseAuth = { initialize: config => { initializeCalls += 1; if (typeof auth.initialize === 'function') auth.initialize(config, initializeCalls); else if (auth.initializeError) throw auth.initializeError; initializedConfig = config; }, getAccessToken: async () => { accessTokenCount += 1; return auth.getAccessToken ? auth.getAccessToken() : null; }, signOut: async () => { signOutCount += 1; if (auth.signOut) return auth.signOut(); } };
   vm.runInNewContext(source, context, { filename: 'data-store.js' });
-  return { store: context.window.YYJDataStore, calls, values, optionsLog };
+  return { store: context.window.YYJDataStore, calls, values, optionsLog, getInitializedConfig: () => initializedConfig, getInitializeCalls: () => initializeCalls, getAccessTokenCount: () => accessTokenCount, getSignOutCount: () => signOutCount };
 }
 
 const seeds = {
@@ -94,11 +100,117 @@ async function assertBearerAndAuthErrors() {
   assert.deepEqual(errorContext.calls, ['/api/health', '/api/auth/config']);
 }
 
+async function assertAuthIssuesAndConfig() {
+  const linked = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true, emailOtpEnabled: true } }), '/api/auth/me': { ok: false, status: 409, body: JSON.stringify({ error: 'auth_identity_conflict', message: 'conflict' }) } });
+  const result = await linked.store.initialize([], []);
+  assert.equal(result.authRequired, true); assert.equal(result.authIssue, 'auth_identity_conflict'); assert.equal(linked.getInitializedConfig().emailOtpEnabled, true);
+}
+
+async function assertAuthIssueVariants() {
+  for (const [body, issue] of [
+    [{ error: 'auth_user_not_linked', message: 'not linked' }, 'auth_user_not_linked'],
+    [{ error: 'invalid_token', message: 'invalid' }, 'invalid_token'],
+    [{ message: 'authentication required' }, 'unauthorized']
+  ]) {
+    const context = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true, emailOtpEnabled: false, supabaseUrl: 'https://project.supabase.co', publishableKey: 'sb_publishable_test' } }), '/api/auth/me': { ok: false, status: 401, body: JSON.stringify(body) } });
+    const result = await context.store.initialize([], []); assert.equal(result.authRequired, true); assert.equal(result.authIssue, issue); assert.equal(result.user, null); assert.deepEqual(plain(result.places), []); assert.deepEqual(plain(result.collections), []); assert.equal(context.store.getMode(), 'server'); assert.equal(context.store.isFallback(), false); assert.deepEqual(context.calls, ['/api/health', '/api/auth/config', '/api/auth/me']);
+  }
+}
+
+async function assertConflictClassification() {
+  const authConflict = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': { ok: false, status: 409, body: JSON.stringify({ error: 'auth_identity_conflict', message: 'conflict' }) } });
+  const result = await authConflict.store.initialize([], []); assert.equal(result.authRequired, true); assert.equal(result.authIssue, 'auth_identity_conflict'); assert.equal(authConflict.store.isFallback(), false); assert.deepEqual(authConflict.calls, ['/api/health', '/api/auth/config', '/api/auth/me']);
+  const ordinaryRequest = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': [ok({ item: { id: 'u' } }), { ok: false, status: 409, body: JSON.stringify({ error: 'ordinary_conflict', message: 'ordinary conflict' }) }], '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }) }); await ordinaryRequest.store.initialize([], []); await assert.rejects(ordinaryRequest.store.getCurrentUser(), error => error.name !== 'AuthenticationError' && error.status === 409 && error.payload.error === 'ordinary_conflict');
+}
+
+async function assertAuthenticationErrorShape() {
+  const payload = { error: 'auth_user_not_linked', message: 'not linked' };
+  const context = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': [ok({ item: { id: 'user-1' } }), { ok: false, status: 401, body: JSON.stringify(payload) }], '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }) });
+  await context.store.initialize([], []);
+  await assert.rejects(context.store.getCurrentUser(), error => error.name === 'AuthenticationError' && error.status === 401 && error.message === 'not linked' && JSON.stringify(error.payload) === JSON.stringify(payload) && error.response === undefined && error.request === undefined && error.token === undefined && error.accessToken === undefined && !JSON.stringify(error).includes('access token') && !String(error).includes('access token'));
+
+  const ordinary = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': [ok({ item: { id: 'user-1' } }), { ok: false, status: 400, body: JSON.stringify({ error: 'bad_request', message: 'bad request' }) }] });
+  await ordinary.store.initialize([], []);
+  await assert.rejects(ordinary.store.getCurrentUser(), error => error.name !== 'AuthenticationError' && error.status === 400 && error.message === 'bad request' && error.payload.error === 'bad_request');
+}
+
+async function assertConfigForwarding() {
+  for (const emailOtpEnabled of [true, false]) {
+    const item = { enabled: true, emailOtpEnabled, supabaseUrl: 'https://project.supabase.co', publishableKey: 'sb_publishable_test' }; const original = { ...item };
+    const context = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item }), '/api/auth/me': ok({ item: { id: 'u' } }), '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }) }); await context.store.initialize([], []); assert.deepEqual(plain(context.getInitializedConfig()), original); assert.deepEqual(item, original);
+  }
+}
+
+async function assertBearerRules() {
+  const withToken = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': ok({ item: { id: 'u' } }), '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }), '/api/auth/register': ok({ item: { id: 'r' } }), '/api/auth/login': ok({ item: { id: 'l' } }), '/api/auth/logout': ok({ ok: true }) }, { getAccessToken: async () => 'bearer-test-token' }); await withToken.store.initialize([], []); for (const path of ['/api/auth/me', '/api/places', '/api/collections']) { const entry = withToken.optionsLog.find(item => item.path === path); assert.equal(entry.options.credentials, 'same-origin'); assert.equal(entry.options.headers.Authorization, 'Bearer bearer-test-token'); } for (const path of ['/api/health', '/api/auth/config']) assert.equal(withToken.optionsLog.find(item => item.path === path).options.headers.Authorization, undefined); await withToken.store.register({ email: 'a', password: 'b' }); await withToken.store.login({ email: 'a', password: 'b' }); await withToken.store.logout(); for (const path of ['/api/auth/register', '/api/auth/login', '/api/auth/logout']) assert.equal(withToken.optionsLog.find(item => item.path === path).options.headers.Authorization, undefined);
+  const withoutToken = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': ok({ item: { id: 'u' } }), '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }) }); await withoutToken.store.initialize([], []); for (const path of ['/api/auth/me', '/api/places', '/api/collections']) assert.equal(Object.prototype.hasOwnProperty.call(withoutToken.optionsLog.find(item => item.path === path).options.headers, 'Authorization'), false);
+}
+
+async function assertFallbackErrors() {
+  for (const code of ['SUPABASE_AUTH_CONFIG_ERROR', 'SUPABASE_AUTH_STATE_ERROR']) { const error = new Error('raw auth detail'); error.code = code; const context = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }) }, { initializeError: error }); await assert.rejects(context.store.initialize([], []), received => received.code === code); assert.equal(context.store.getMode(), 'browser'); assert.equal(context.store.isFallback(), false); assert.deepEqual(context.calls, ['/api/health', '/api/auth/config']); assert.equal(context.values.size, 0); }
+}
+
+async function assertLogoutOutcomes() {
+  const base = { '/api/auth/logout': ok({ ok: true }) };
+  const success = createContext({ protocol: 'https:', hostname: 'example.test' }, base); await success.store.logout(); assert.equal(success.calls.filter(path => path === '/api/auth/logout').length, 1); assert.equal(success.getSignOutCount(), 1);
+  const serverFailure = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': new Error('raw server logout') }); await assert.rejects(serverFailure.store.logout(), error => error.code === 'LOGOUT_FAILED' && !error.message.includes('raw')); assert.equal(serverFailure.getSignOutCount(), 1);
+  const supabaseFailure = createContext({ protocol: 'https:', hostname: 'example.test' }, base, { signOut: async () => { throw new Error('raw supabase logout'); } }); await assert.rejects(supabaseFailure.store.logout(), error => error.code === 'LOGOUT_FAILED' && !error.message.includes('raw')); assert.equal(supabaseFailure.calls.filter(path => path === '/api/auth/logout').length, 1); assert.equal(supabaseFailure.getSignOutCount(), 1);
+  const bothFailure = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': new Error('raw server') }, { signOut: async () => { throw new Error('raw supabase'); } }); await assert.rejects(bothFailure.store.logout(), error => error.code === 'LOGOUT_FAILED'); assert.equal(bothFailure.getSignOutCount(), 1);
+}
+
+async function assertPass15MissingCoverage() {
+  const assertHiddenAuthError = async (context, expectedStatus, payload, token) => {
+    await assert.rejects(context.store.getCurrentUser(), error => error.name === 'AuthenticationError' && error.status === expectedStatus && error.message === payload.message && JSON.stringify(error.payload) === JSON.stringify(payload) && !Object.prototype.hasOwnProperty.call(error, 'response') && !Object.prototype.hasOwnProperty.call(error, 'request') && !Object.prototype.hasOwnProperty.call(error, 'token') && !Object.prototype.hasOwnProperty.call(error, 'accessToken') && !String(error).includes(token) && !JSON.stringify(error).includes(token));
+  };
+  const conflictPayload = { error: 'auth_identity_conflict', message: 'conflict' };
+  const conflict = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': [ok({ item: { id: 'u' } }), { ok: false, status: 409, body: JSON.stringify(conflictPayload) }], '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }) }, { getAccessToken: async () => 'shape-conflict-token' });
+  await conflict.store.initialize([], []);
+  await assertHiddenAuthError(conflict, 409, conflictPayload, 'shape-conflict-token');
+  assert.equal(conflict.store.getMode(), 'server'); assert.equal(conflict.store.isFallback(), false);
+
+  for (const [status, payload] of [[409, { error: 'ordinary_conflict', message: 'ordinary conflict' }], [400, { error: 'bad_request', message: 'bad request' }], [500, { error: 'server_error', message: 'server error' }]]) {
+    const context = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': [ok({ item: { id: 'u' } }), { ok: false, status, body: JSON.stringify(payload) }] });
+    await context.store.initialize([], []);
+    await assert.rejects(context.store.getCurrentUser(), error => error.name !== 'AuthenticationError' && error.status === status && error.message === payload.message && JSON.stringify(error.payload) === JSON.stringify(payload) && error.authIssue === undefined);
+  }
+
+  const api = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': ok({ item: { id: 'u' } }), '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }), '/api/auth/register': ok({ item: { id: 'r' } }), '/api/auth/login': ok({ item: { id: 'l' } }), '/api/auth/logout': ok({ ok: true }) }, { getAccessToken: async () => 'public-api-token' });
+  await api.store.initialize([], []); const baseline = api.getAccessTokenCount();
+  await api.store.register({ email: 'register@example.com', password: 'register-password' }); assert.equal(api.getAccessTokenCount(), baseline);
+  await api.store.login({ email: 'login@example.com', password: 'login-password' }); assert.equal(api.getAccessTokenCount(), baseline);
+  await api.store.logout(); assert.equal(api.getAccessTokenCount(), baseline);
+  for (const [path, input] of [['/api/auth/register', { email: 'register@example.com', password: 'register-password' }], ['/api/auth/login', { email: 'login@example.com', password: 'login-password' }]]) {
+    const entry = api.optionsLog.find(item => item.path === path); assert.equal(entry.options.method, 'POST'); assert.equal(entry.options.credentials, 'same-origin'); assert.equal(entry.options.headers['content-type'], 'application/json'); assert.equal(entry.options.headers.Authorization, undefined); assert.deepEqual(JSON.parse(entry.options.body), input);
+  }
+  const logoutRequest = api.optionsLog.find(item => item.path === '/api/auth/logout'); assert.equal(logoutRequest.options.method, 'POST'); assert.equal(logoutRequest.options.headers.Authorization, undefined);
+
+  const logoutMessage = '로그아웃을 완료하지 못했습니다.';
+  for (const context of [createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': new Error('raw server logout') }), createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': ok({ ok: true }) }, { signOut: async () => { throw new Error('raw supabase logout'); } }), createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': new Error('raw server') }, { signOut: async () => { throw new Error('raw supabase'); } })]) {
+    await assert.rejects(context.store.logout(), error => error.code === 'LOGOUT_FAILED' && error.message === logoutMessage && !String(error).includes('raw') && !JSON.stringify(error).includes('raw'));
+  }
+
+  for (const code of ['SUPABASE_AUTH_CONFIG_ERROR', 'SUPABASE_AUTH_STATE_ERROR']) {
+    let throwOn = 2; const context = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': [ok({ ok: true }), ok({ ok: true })], '/api/auth/config': [ok({ item: { enabled: true } }), ok({ item: { enabled: true } })], '/api/auth/me': [ok({ item: { id: 'u' } }), ok({ item: { id: 'u' } })], '/api/places': [ok({ items: [] }), ok({ items: [] })], '/api/collections': [ok({ items: [] }), ok({ items: [] })] }, { initialize: (config, count) => { if (count === throwOn) { const error = new Error('raw'); error.code = code; throw error; } } });
+    const first = await context.store.initialize(seeds.places, seeds.collections); assert.equal(first.mode, 'server'); assert.equal(first.fallback, false); await assert.rejects(context.store.initialize(seeds.places, seeds.collections), error => error.code === code); assert.equal(context.store.getMode(), 'server'); assert.equal(context.store.isFallback(), false); assert.equal(context.values.has('yyj_places'), false); assert.equal(context.values.has('yyj_collections'), false);
+  }
+
+  let failed = false; const tokenContext = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': ok({ item: { id: 'u' } }), '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }) }, { getAccessToken: async () => { if (failed) { const error = new Error('raw'); error.code = 'SUPABASE_AUTH_STATE_ERROR'; throw error; } return null; } }); await tokenContext.store.initialize([], []); failed = true; await assert.rejects(tokenContext.store.getCurrentUser(), error => error.code === 'SUPABASE_AUTH_STATE_ERROR'); assert.equal(tokenContext.store.getMode(), 'server'); assert.equal(tokenContext.store.isFallback(), false);
+}
+
 (async () => {
   await assertRenderHttps();
   await assertLocalhost();
   await assertStaticHttpsFallback();
   await assertFileProtocol();
   await assertBearerAndAuthErrors();
+  await assertAuthIssuesAndConfig();
+  await assertAuthIssueVariants();
+  await assertConflictClassification();
+  await assertAuthenticationErrorShape();
+  await assertConfigForwarding();
+  await assertBearerRules();
+  await assertFallbackErrors();
+  await assertLogoutOutcomes();
+  await assertPass15MissingCoverage();
   console.log('Web datastore tests passed: Render HTTPS, localhost, static HTTPS fallback, and file protocol');
 })().catch(error => { console.error(`Web datastore tests failed: ${error.message}`); process.exitCode = 1; });
