@@ -122,6 +122,12 @@ button { -webkit-tap-highlight-color: transparent; }
 .auth-card form { display: grid; gap: 15px; }
 .auth-error { min-height: 20px; margin: 0; color: var(--danger); font-size: 12px; }
 .auth-switch { width: 100%; border: 0; background: none; color: var(--primary); padding: 18px 4px 0; cursor: pointer; }
+.auth-notice { color: var(--primary) !important; background: color-mix(in srgb, var(--primary) 9%, transparent); border-radius: 10px; padding: 10px 12px; }
+.auth-issue { color: var(--danger); }
+.auth-actions { display: grid; gap: 10px; margin-top: 10px; }
+.otp-email { color: var(--muted); overflow-wrap: anywhere; }
+.auth-card button:disabled, .auth-card input:disabled { opacity: .6; cursor: not-allowed; }
+@media (max-width: 420px) { .auth-card { padding: 20px 16px; } .auth-card button { min-height: 44px; } }
 .collection-privacy { margin-top: 16px; }
 .form-error { min-height: 20px; margin: 10px 0 0; color: var(--danger); font-size: 12px; }
 .dialog-form-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }

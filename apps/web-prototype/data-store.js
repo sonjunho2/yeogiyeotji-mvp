@@ -9,10 +9,10 @@
   let fallback = false;
 
   class AuthenticationError extends Error {
-    constructor(message, payload) {
+    constructor(message, status = 401, payload = null) {
       super(message);
       this.name = 'AuthenticationError';
-      this.status = 401;
+      this.status = status;
       this.payload = payload;
     }
   }
@@ -87,7 +87,7 @@
       let payload;
       try { payload = JSON.parse(raw); } catch (error) { throw new Error('서버 응답 형식이 올바르지 않습니다.'); }
       if (!response.ok) {
-        if (response.status === 401) throw new AuthenticationError(payload.message || '로그인이 필요합니다.', payload);
+        if (response.status === 401 || (response.status === 409 && payload.error === 'auth_identity_conflict')) throw new AuthenticationError(payload.message || '로그인이 필요합니다.', response.status, payload);
         const error = new Error(payload.message || (response.status === 404 ? '요청한 데이터를 찾을 수 없습니다.' : response.status >= 500 ? '서버에서 오류가 발생했습니다.' : '입력값을 확인해 주세요.'));
         error.status = response.status;
         error.payload = payload;
@@ -121,7 +121,7 @@
           const [places, collections] = await Promise.all([listPlaces(), listCollections()]);
           return { places, collections, user, mode, fallback, authRequired: false };
         } catch (error) {
-          if (error instanceof AuthenticationError) return { places: [], collections: [], user: null, mode, fallback, authRequired: true };
+          if (error instanceof AuthenticationError) return { places: [], collections: [], user: null, mode, fallback, authRequired: true, authIssue: error.payload && error.payload.error ? error.payload.error : 'unauthorized' };
           throw error;
         }
       } catch (error) {
