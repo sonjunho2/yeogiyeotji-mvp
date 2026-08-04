@@ -13,6 +13,7 @@ const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'yeogiyeotji-te
 const dataFile = path.join(temporaryDirectory, 'store.json');
 const childEnv = { ...process.env, PORT: String(port), DATA_FILE: dataFile, NODE_ENV: 'test' };
 delete childEnv.SUPABASE_URL;
+delete childEnv.SUPABASE_PUBLISHABLE_KEY;
 delete childEnv.SUPABASE_JWT_ISSUER;
 delete childEnv.SUPABASE_JWKS_URL;
 delete childEnv.SUPABASE_JWT_AUDIENCE;
@@ -58,6 +59,15 @@ const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /authU
   const userB = createClient();
   try {
     await waitForServer();
+
+    const authConfig = await fetch(`${baseUrl}/api/auth/config`);
+    assert.equal(authConfig.status, 200);
+    assert.equal(authConfig.headers.get('cache-control'), 'no-store');
+    const authConfigBody = await authConfig.json();
+    assert.deepEqual(authConfigBody, { item: { enabled: false } });
+    assert.doesNotMatch(JSON.stringify(authConfigBody), /secret|serviceRole|service_role|processEnv|process\.env/i);
+    const postConfig = await fetch(`${baseUrl}/api/auth/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.notEqual(postConfig.status, 200);
 
     const proxyRegister = await fetch(`${baseUrl}/api/auth/register`, {
       ...jsonOptions('POST', { email: 'proxy@example.com', password: 'proxy-password', displayName: 'Proxy user' }),

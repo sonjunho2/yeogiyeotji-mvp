@@ -1,0 +1,31 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('apps/web-prototype/supabase-auth.js', 'utf8');
+let createCount = 0; let signOutCount = 0; let callback; let clientOptions; let sessionResult = { data: { session: { access_token: 'token' } } }; let signOutResult = {};
+const fakeClient = { auth: { onAuthStateChange: fn => { callback = fn; }, getSession: async () => sessionResult, signOut: async () => { signOutCount += 1; return signOutResult; } } };
+let createdUrl; let createdKey;
+const context = { window: { supabase: { createClient: (url, key, options) => { createCount += 1; createdUrl = url; createdKey = key; clientOptions = options; return fakeClient; } } }, console, URL };
+vm.createContext(context); vm.runInContext(source, context);
+const auth = context.window.YYJSupabaseAuth;
+(async () => {
+  assert.deepEqual(Object.keys(auth).sort(), ['getAccessToken', 'initialize', 'isEnabled', 'signOut'].sort());
+  auth.initialize({ enabled: false }); assert.equal(createCount, 0); assert.equal(await auth.getAccessToken(), null);
+  auth.initialize({ enabled: true, supabaseUrl: 'https://project.supabase.co', publishableKey: 'sb_publishable_test' }); assert.equal(createCount, 1);
+  assert.equal(createdUrl, 'https://project.supabase.co'); assert.equal(createdKey, 'sb_publishable_test');
+  assert.equal(clientOptions.auth.persistSession, true); assert.equal(clientOptions.auth.autoRefreshToken, true); assert.equal(clientOptions.auth.detectSessionInUrl, true);
+  auth.initialize({ enabled: true, supabaseUrl: 'https://project.supabase.co', publishableKey: 'sb_publishable_test' }); assert.equal(createCount, 1);
+  auth.initialize({ enabled: false }); assert.equal(auth.isEnabled(), false); assert.equal(await auth.getAccessToken(), null);
+  auth.initialize({ enabled: true, supabaseUrl: 'https://project.supabase.co/', publishableKey: 'sb_publishable_test' }); assert.equal(createCount, 1);
+  await assert.rejects(Promise.resolve().then(() => auth.initialize({ enabled: true, supabaseUrl: 'https://other-project.supabase.co', publishableKey: 'sb_publishable_other' })), error => error.code === 'SUPABASE_AUTH_CONFIG_ERROR');
+  callback('INITIAL_SESSION', { access_token: 'initial' }); assert.equal(await auth.getAccessToken(), 'initial');
+  for (const event of ['SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED']) { callback(event, { access_token: event }); assert.equal(await auth.getAccessToken(), event); }
+  callback('SIGNED_OUT', null); assert.equal(await auth.getAccessToken(), null);
+  sessionResult = { error: new Error('hidden') }; callback('SIGNED_IN', null); await assert.rejects(auth.getAccessToken(), error => error.code === 'SUPABASE_AUTH_STATE_ERROR');
+  sessionResult = { data: { session: null } }; callback('SIGNED_OUT', null); assert.equal(await auth.getAccessToken(), null);
+  signOutResult = {}; await auth.signOut(); assert.equal(signOutCount, 1);
+  signOutResult = { error: new Error('hidden') }; await assert.rejects(auth.signOut(), error => error.code === 'SUPABASE_AUTH_STATE_ERROR');
+  assert.equal(JSON.stringify(auth).includes('token'), false);
+  console.log('Web Supabase auth tests passed: initialization, events, state errors, signOut, and encapsulation');
+})().catch(error => { console.error(`Web Supabase auth tests failed: ${error.message}`); process.exitCode = 1; });

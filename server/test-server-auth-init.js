@@ -36,7 +36,7 @@ function runServer(env, expectHealth) {
 
 function baseEnvironment(directory, port) {
   const env = { ...process.env, NODE_ENV: 'test', STORAGE_DRIVER: 'json', PORT: String(port), DATA_FILE: path.join(directory, 'store.json') };
-  for (const key of ['SUPABASE_URL', 'SUPABASE_JWT_ISSUER', 'SUPABASE_JWKS_URL', 'SUPABASE_JWT_AUDIENCE']) delete env[key];
+  for (const key of ['SUPABASE_URL', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_JWT_ISSUER', 'SUPABASE_JWKS_URL', 'SUPABASE_JWT_AUDIENCE']) delete env[key];
   return env;
 }
 
@@ -65,6 +65,13 @@ function baseEnvironment(directory, port) {
     assert.equal(partial.exitCode, 1);
     assert.match(partial.stderr, /Server initialization failed: Authentication configuration is invalid/);
     assert.doesNotMatch(partial.stderr, /private-test-audience|SUPABASE_JWT_AUDIENCE|Error:|\bat server\b|stack/i);
+
+    const publicConfigDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'yeogiyeotji-auth-init-')); directories.push(publicConfigDirectory);
+    const publicConfig = await runServer({ ...baseEnvironment(publicConfigDirectory, await availablePort()), SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test' }, true);
+    assert.equal(publicConfig.healthReached, false);
+    assert.equal(publicConfig.exitCode, 1);
+    assert.match(publicConfig.stderr, /Server initialization failed: Authentication configuration is invalid/);
+    assert.doesNotMatch(publicConfig.stderr, /sb_publishable|SUPABASE_PUBLISHABLE_KEY|Error:|stack|at /i);
     console.log('Server auth initialization tests passed: disabled health, incompatible storage, and partial configuration scenarios');
   } finally {
     for (const directory of directories) fs.rmSync(directory, { recursive: true, force: true });

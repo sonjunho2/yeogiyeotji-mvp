@@ -6,11 +6,13 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync('apps/web-prototype/data-store.js', 'utf8');
 
-function createContext(location, responses) {
+function createContext(location, responses, auth = {}) {
   const values = new Map();
   const calls = [];
-  const fetch = async (path) => {
+  const optionsLog = [];
+  const fetch = async (path, options) => {
     calls.push(path);
+    optionsLog.push({ path, options });
     const response = responses[path];
     if (response instanceof Error) throw response;
     return { ok: response.ok, status: response.status, text: async () => response.body };
@@ -26,9 +28,9 @@ function createContext(location, responses) {
     AbortController,
     console: { error: () => {} }
   };
-  context.window = context.window;
+  context.window.YYJSupabaseAuth = { initialize: () => {}, getAccessToken: auth.getAccessToken || (async () => null), signOut: auth.signOut || (async () => {}) };
   vm.runInNewContext(source, context, { filename: 'data-store.js' });
-  return { store: context.window.YYJDataStore, calls, values };
+  return { store: context.window.YYJDataStore, calls, values, optionsLog };
 }
 
 const seeds = {
@@ -39,18 +41,18 @@ const ok = body => ({ ok: true, status: 200, body: JSON.stringify(body) });
 const unauthorized = { ok: false, status: 401, body: JSON.stringify({ message: 'unauthorized' }) };
 
 async function assertRenderHttps() {
-  const { store, calls } = createContext({ protocol: 'https:', hostname: 'yeogiyeotji-mvp.onrender.com' }, { '/api/health': ok({ ok: true }), '/api/auth/me': unauthorized });
+  const { store, calls } = createContext({ protocol: 'https:', hostname: 'yeogiyeotji-mvp.onrender.com' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: false } }), '/api/auth/me': unauthorized });
   const result = await store.initialize(seeds.places, seeds.collections);
   assert.equal(result.mode, 'server');
   assert.equal(result.fallback, false);
   assert.equal(result.authRequired, true);
   assert.equal(result.places.length, 0);
   assert.equal(result.collections.length, 0);
-  assert.deepEqual(calls, ['/api/health', '/api/auth/me']);
+  assert.deepEqual(calls, ['/api/health', '/api/auth/config', '/api/auth/me']);
 }
 
 async function assertLocalhost() {
-  const { store } = createContext({ protocol: 'http:', hostname: 'localhost' }, { '/api/health': ok({ ok: true }), '/api/auth/me': unauthorized });
+  const { store } = createContext({ protocol: 'http:', hostname: 'localhost' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: false } }), '/api/auth/me': unauthorized });
   const result = await store.initialize([], []);
   assert.equal(result.mode, 'server');
   assert.equal(result.fallback, false);
@@ -79,10 +81,24 @@ async function assertFileProtocol() {
   assert.deepEqual(calls, []);
 }
 
+async function assertBearerAndAuthErrors() {
+  const tokenContext = createContext({ protocol: 'https:', hostname: 'example.test' }, {
+    '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': ok({ item: { id: 'u' } }), '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] })
+  }, { getAccessToken: async () => 'test-token' });
+  await tokenContext.store.initialize([], []);
+  const protectedCalls = tokenContext.optionsLog.filter(item => ['/api/auth/me', '/api/places', '/api/collections'].includes(item.path));
+  assert.ok(protectedCalls.every(item => item.options.headers.Authorization === 'Bearer test-token'));
+  assert.equal(tokenContext.optionsLog.find(item => item.path === '/api/health').options.headers.Authorization, undefined);
+  const errorContext = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }) }, { getAccessToken: async () => { const error = new Error('hidden'); error.code = 'SUPABASE_AUTH_STATE_ERROR'; throw error; } });
+  await assert.rejects(errorContext.store.initialize([], []), error => error.code === 'SUPABASE_AUTH_STATE_ERROR');
+  assert.deepEqual(errorContext.calls, ['/api/health', '/api/auth/config']);
+}
+
 (async () => {
   await assertRenderHttps();
   await assertLocalhost();
   await assertStaticHttpsFallback();
   await assertFileProtocol();
+  await assertBearerAndAuthErrors();
   console.log('Web datastore tests passed: Render HTTPS, localhost, static HTTPS fallback, and file protocol');
 })().catch(error => { console.error(`Web datastore tests failed: ${error.message}`); process.exitCode = 1; });

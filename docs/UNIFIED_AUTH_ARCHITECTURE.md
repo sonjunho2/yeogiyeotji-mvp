@@ -1,5 +1,11 @@
 # 통합 인증 아키텍처
 
+## 1차 클라이언트 기반 구현 상태
+
+브라우저는 서버의 `GET /api/auth/config`에서 `SUPABASE_PUBLISHABLE_KEY`와 `SUPABASE_URL`만 받아 Supabase JS client를 초기화한다. access token이 있는 보호 API 요청에는 `Authorization: Bearer`를 추가하고, 토큰이 없을 때는 기존 `yyj_session` 쿠키 인증을 유지한다. Supabase 인증 UI와 실제 계정 연동은 아직 구현하지 않았다.
+
+공개 설정 오류는 고정된 `PUBLIC_SUPABASE_CONFIG_ERROR`로 처리하며 입력값을 오류 메시지에 포함하지 않는다. Supabase 상태 조회 오류는 `SUPABASE_AUTH_STATE_ERROR`로 구분하여 브라우저 저장소 fallback으로 변환하지 않는다. 로그아웃은 서버 쿠키와 Supabase 세션 정리를 모두 시도하고, 어느 한쪽이라도 실패하면 실패를 반환한다.
+
 ## 목표와 범위
 
 한국 우선 출시 후 글로벌 확장을 고려한다. 초기 로그인 수단은 카카오, Google, Apple, 이메일 OTP이며 휴대폰 OTP와 네이버 로그인은 후속 단계다. 이 문서는 설계 문서이며 OAuth 키 설정, Supabase Auth 연결, 실제 로그인 코드 구현을 포함하지 않는다.

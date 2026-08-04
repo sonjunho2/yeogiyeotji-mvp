@@ -77,7 +77,11 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     try {
-      const response = await fetch(path, { ...options, credentials: 'same-origin', signal: controller.signal, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
+      const useBearer = options.useBearer === true;
+      const requestOptions = { ...options }; delete requestOptions.useBearer;
+      const headers = { 'content-type': 'application/json', ...(requestOptions.headers || {}) };
+      if (useBearer) { const token = await window.YYJSupabaseAuth.getAccessToken(); if (token) headers.Authorization = `Bearer ${token}`; }
+      const response = await fetch(path, { ...requestOptions, credentials: 'same-origin', signal: controller.signal, headers });
       const raw = await response.text();
       if (!raw) throw new Error('서버가 빈 응답을 보냈습니다.');
       let payload;
@@ -100,7 +104,7 @@
 
   async function checkServer() {
     if (!isServerCapableOrigin()) return false;
-    const result = await request('/api/health');
+    const result = await request('/api/health', { useBearer: false });
     return result.ok === true;
   }
 
@@ -108,6 +112,8 @@
     if (isServerCapableOrigin()) {
       try {
         if (!await checkServer()) throw new Error('서버 상태를 확인할 수 없습니다.');
+        const config = await request('/api/auth/config', { useBearer: false });
+        window.YYJSupabaseAuth.initialize(config.item);
         mode = 'server';
         fallback = false;
         try {
@@ -120,6 +126,7 @@
         }
       } catch (error) {
         console.error('서버 연결 실패, 브라우저 저장으로 전환합니다.', error);
+        if (error && ['SUPABASE_AUTH_STATE_ERROR', 'SUPABASE_AUTH_CONFIG_ERROR'].includes(error.code)) throw error;
         mode = 'browser';
         fallback = true;
       }
@@ -137,19 +144,21 @@
   }
 
   async function register(credentials) {
-    return (await request('/api/auth/register', { method: 'POST', body: JSON.stringify(credentials) })).item;
+    return (await request('/api/auth/register', { method: 'POST', body: JSON.stringify(credentials), useBearer: false })).item;
   }
 
   async function login(credentials) {
-    return (await request('/api/auth/login', { method: 'POST', body: JSON.stringify(credentials) })).item;
+    return (await request('/api/auth/login', { method: 'POST', body: JSON.stringify(credentials), useBearer: false })).item;
   }
 
   async function logout() {
-    return request('/api/auth/logout', { method: 'POST', body: '{}' });
+    const results = await Promise.allSettled([request('/api/auth/logout', { method: 'POST', body: '{}', useBearer: false }), window.YYJSupabaseAuth.signOut()]);
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure) { const error = new Error('로그아웃을 완료하지 못했습니다.'); error.code = 'LOGOUT_FAILED'; throw error; }
   }
 
   async function getCurrentUser() {
-    return (await request('/api/auth/me')).item;
+    return (await request('/api/auth/me', { useBearer: true })).item;
   }
 
   async function loadServerData() {
@@ -158,13 +167,13 @@
   }
 
   async function listPlaces() {
-    if (mode === 'server') return (await request('/api/places')).items.map(normalizePlace);
+    if (mode === 'server') return (await request('/api/places', { useBearer: true })).items.map(normalizePlace);
     return readLocal(PLACE_KEY, []).map(normalizePlace);
   }
 
   async function createPlace(place) {
     if (mode === 'server') {
-      const created = normalizePlace((await request('/api/places', { method: 'POST', body: JSON.stringify(toServerPlace(place)) })).item);
+      const created = normalizePlace((await request('/api/places', { method: 'POST', body: JSON.stringify(toServerPlace(place)), useBearer: true })).item);
       if (place.image) {
         try {
           const photos = readLocal(PHOTO_KEY, {});
@@ -186,7 +195,7 @@
   }
 
   async function deletePlace(id) {
-    if (mode === 'server') await request(`/api/places/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (mode === 'server') await request(`/api/places/${encodeURIComponent(id)}`, { method: 'DELETE', useBearer: true });
     else writeLocal(PLACE_KEY, readLocal(PLACE_KEY, []).filter(place => String(place.id) !== String(id)));
     const photos = readLocal(PHOTO_KEY, {});
     delete photos[id];
@@ -194,13 +203,13 @@
   }
 
   async function listCollections() {
-    if (mode === 'server') return (await request('/api/collections')).items.map(normalizeCollection);
+    if (mode === 'server') return (await request('/api/collections', { useBearer: true })).items.map(normalizeCollection);
     return readLocal(COLLECTION_KEY, []).map(normalizeCollection);
   }
 
   async function createCollection(collection) {
     const payload = { name: collection.name, privacy: collection.privacy };
-    if (mode === 'server') return normalizeCollection((await request('/api/collections', { method: 'POST', body: JSON.stringify(payload) })).item);
+    if (mode === 'server') return normalizeCollection((await request('/api/collections', { method: 'POST', body: JSON.stringify(payload), useBearer: true })).item);
     const created = normalizeCollection({ ...payload, id: collection.id || `c${Date.now()}` });
     const collections = readLocal(COLLECTION_KEY, []);
     collections.push(created);
