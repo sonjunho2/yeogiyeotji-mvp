@@ -9,11 +9,13 @@ const { createStorage } = require('./storage');
 const { hashPassword, verifyPassword } = require('./auth/password');
 const { createSupabaseJwtVerifier } = require('./auth/supabase-jwt');
 const { resolveRequestAuthentication } = require('./auth/request-auth');
+const { resolvePublicSupabaseConfig } = require('./auth/public-supabase-config');
 
 const PORT = Number(process.env.PORT || 4100);
 const DATA_FILE = process.env.DATA_FILE ? path.resolve(process.env.DATA_FILE) : path.join(__dirname, 'data', 'store.json');
 const storage = createStorage({ dataFile: DATA_FILE });
 let jwtVerifier = null;
+let publicSupabaseConfig = { enabled: false };
 const WEB_ROOT = path.resolve(__dirname, '..', 'apps', 'web-prototype');
 const SESSION_COOKIE = 'yyj_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
@@ -171,6 +173,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (!validateMutationRequest(req, url, res)) return;
     if (pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, service: 'yeogiyeotji-api', time: new Date().toISOString() });
+    if (pathname === '/api/auth/config' && req.method === 'GET') return authJson(res, 200, { item: publicSupabaseConfig });
 
     if (pathname === '/api/auth/register' && req.method === 'POST') {
       const body = await readBody(req);
@@ -292,12 +295,13 @@ storage.initialize().then(async () => {
     error.code = 'AUTH_CONFIGURATION_ERROR';
     throw error;
   }
+  publicSupabaseConfig = resolvePublicSupabaseConfig();
   return server.listen(PORT, '0.0.0.0', () => {
   console.log(`여기였지 API: http://localhost:${PORT}`);
   console.log(`웹 프로토타입: http://localhost:${PORT}/`);
   });
 }).catch(error => {
-  if (error && (error.code === 'SUPABASE_JWT_CONFIG_ERROR' || error.code === 'AUTH_CONFIGURATION_ERROR')) {
+  if (error && (error.code === 'SUPABASE_JWT_CONFIG_ERROR' || error.code === 'AUTH_CONFIGURATION_ERROR' || error.code === 'PUBLIC_SUPABASE_CONFIG_ERROR')) {
     console.error('Server initialization failed: Authentication configuration is invalid');
   } else {
     console.error('Server initialization failed');
