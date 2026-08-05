@@ -67,10 +67,36 @@ function createJsonStorage(dataFile) {
     initialize: async () => { const data = await load(); await methods.deleteExpiredSessions(new Date().toISOString()); return data; },
     findUserById: async userId => (await load()).users.find(user => user.id === userId) || null,
     findUserByEmail: async email => (await load()).users.find(user => user.email === email) || null,
+    findUserByAuthUserId: async authUserId => {
+      const user = (await load()).users.find(item => item.authUserId === authUserId);
+      return user ? clone(user) : null;
+    },
+    linkUserToAuthUser: (userId, authUserId) => mutate(data => {
+      const user = data.users.find(item => item.id === userId);
+      if (!user) return null;
+      if (user.authUserId === authUserId) return user;
+      if (user.authUserId !== null && user.authUserId !== undefined) {
+        const error = new Error('User is already linked to another auth user');
+        error.code = 'USER_AUTH_ALREADY_LINKED';
+        throw error;
+      }
+      if (data.users.some(item => item.id !== userId && item.authUserId === authUserId)) {
+        const error = new Error('Auth user is already linked');
+        error.code = 'AUTH_USER_EXISTS';
+        throw error;
+      }
+      user.authUserId = authUserId;
+      return user;
+    }),
     createUser: user => mutate(data => {
       if (data.users.some(item => item.email === user.email)) {
         const error = new Error('Email already exists');
         error.code = 'EMAIL_EXISTS';
+        throw error;
+      }
+      if (user.authUserId !== null && user.authUserId !== undefined && data.users.some(item => item.authUserId === user.authUserId)) {
+        const error = new Error('Auth user is already linked');
+        error.code = 'AUTH_USER_EXISTS';
         throw error;
       }
       data.users.push(user);
