@@ -19,19 +19,26 @@ function assertConfigError(env, hiddenValues = Object.values(env).filter(value =
 }
 
 function testDisabledConfigurations() {
-  assert.deepEqual(resolvePublicSupabaseConfig({}), { enabled: false, emailOtpEnabled: false });
-  assert.deepEqual(resolvePublicSupabaseConfig({ SUPABASE_EMAIL_OTP_ENABLED: 'false' }), { enabled: false, emailOtpEnabled: false });
-  assert.deepEqual(resolvePublicSupabaseConfig({ SUPABASE_URL: 'https://project.supabase.co' }), { enabled: false, emailOtpEnabled: false });
-  assert.deepEqual(resolvePublicSupabaseConfig({ SUPABASE_URL: 'https://project.supabase.co', SUPABASE_EMAIL_OTP_ENABLED: 'false' }), { enabled: false, emailOtpEnabled: false });
+  assert.deepEqual(resolvePublicSupabaseConfig({}), { enabled: false, emailOtpEnabled: false, googleOAuthEnabled: false });
+  assert.deepEqual(resolvePublicSupabaseConfig({ SUPABASE_EMAIL_OTP_ENABLED: 'false' }), { enabled: false, emailOtpEnabled: false, googleOAuthEnabled: false });
+  assert.deepEqual(resolvePublicSupabaseConfig({ SUPABASE_URL: 'https://project.supabase.co' }), { enabled: false, emailOtpEnabled: false, googleOAuthEnabled: false });
+  assert.deepEqual(resolvePublicSupabaseConfig({ SUPABASE_URL: 'https://project.supabase.co', SUPABASE_EMAIL_OTP_ENABLED: 'false' }), { enabled: false, emailOtpEnabled: false, googleOAuthEnabled: false });
 }
 
 function testEnabledConfigurations() {
   const normal = { SUPABASE_URL: 'https://project.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test' };
-  assert.deepEqual(resolvePublicSupabaseConfig(normal), { enabled: true, emailOtpEnabled: false, supabaseUrl: normal.SUPABASE_URL, publishableKey: normal.SUPABASE_PUBLISHABLE_KEY });
+  assert.deepEqual(resolvePublicSupabaseConfig(normal), { enabled: true, emailOtpEnabled: false, googleOAuthEnabled: false, supabaseUrl: normal.SUPABASE_URL, publishableKey: normal.SUPABASE_PUBLISHABLE_KEY });
   assert.equal(resolvePublicSupabaseConfig({ ...normal, SUPABASE_EMAIL_OTP_ENABLED: 'false' }).emailOtpEnabled, false);
   assert.equal(resolvePublicSupabaseConfig({ ...normal, SUPABASE_EMAIL_OTP_ENABLED: 'true' }).emailOtpEnabled, true);
+  assert.equal(resolvePublicSupabaseConfig({ ...normal, SUPABASE_GOOGLE_OAUTH_ENABLED: 'true' }).googleOAuthEnabled, true);
+  assert.equal(resolvePublicSupabaseConfig({ ...normal, SUPABASE_GOOGLE_OAUTH_ENABLED: 'false' }).googleOAuthEnabled, false);
+  assert.throws(() => resolvePublicSupabaseConfig({ SUPABASE_GOOGLE_OAUTH_ENABLED: 'true' }), error => error.code === 'PUBLIC_SUPABASE_CONFIG_ERROR');
+  assert.throws(() => resolvePublicSupabaseConfig({ SUPABASE_GOOGLE_OAUTH_ENABLED: 'true', SUPABASE_URL: normal.SUPABASE_URL }), error => error.code === 'PUBLIC_SUPABASE_CONFIG_ERROR');
+  assert.throws(() => resolvePublicSupabaseConfig({ SUPABASE_GOOGLE_OAUTH_ENABLED: 'true', SUPABASE_PUBLISHABLE_KEY: normal.SUPABASE_PUBLISHABLE_KEY }), error => error.code === 'PUBLIC_SUPABASE_CONFIG_ERROR');
+  assert.equal(resolvePublicSupabaseConfig({ ...normal, SUPABASE_EMAIL_OTP_ENABLED: 'true', SUPABASE_GOOGLE_OAUTH_ENABLED: 'true' }).enabled, true);
+  for (const value of ['', 'TRUE', '1', true, 1]) assert.throws(() => resolvePublicSupabaseConfig({ ...normal, SUPABASE_GOOGLE_OAUTH_ENABLED: value }), error => error.code === 'PUBLIC_SUPABASE_CONFIG_ERROR');
   const padded = { SUPABASE_URL: 'https://project.supabase.co/', SUPABASE_PUBLISHABLE_KEY: '  sb_publishable_test  ', SUPABASE_EMAIL_OTP_ENABLED: 'true' };
-  const before = { ...padded }; assert.deepEqual(resolvePublicSupabaseConfig(padded), { enabled: true, emailOtpEnabled: true, supabaseUrl: 'https://project.supabase.co', publishableKey: 'sb_publishable_test' }); assert.deepEqual(padded, before);
+  const before = { ...padded }; assert.deepEqual(resolvePublicSupabaseConfig(padded), { enabled: true, emailOtpEnabled: true, googleOAuthEnabled: false, supabaseUrl: 'https://project.supabase.co', publishableKey: 'sb_publishable_test' }); assert.deepEqual(padded, before);
 }
 
 function testOtpFlagValidation() {

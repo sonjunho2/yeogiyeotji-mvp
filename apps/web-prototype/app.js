@@ -84,10 +84,14 @@ function renderAuth() {
   document.body.classList.add('auth-visible');
   const registering = mode === 'register';
   setHeader('여기였지', '내 장소를 안전하게 기억하기');
-  view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${registering ? '회원가입' : '로그인'}</h2><p>${registering ? '나만의 장소와 컬렉션을 시작하세요.' : '저장한 장소를 다시 만나보세요.'}</p><form id="authForm">${registering ? '<label class="field"><span>표시 이름</span><input id="authDisplayName" autocomplete="name" maxlength="40" required /></label>' : ''}<label class="field"><span>이메일</span><input id="authEmail" type="email" autocomplete="email" maxlength="254" required /></label><label class="field"><span>비밀번호</span><input id="authPassword" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" minlength="8" maxlength="128" required /></label><p id="authError" class="auth-error" role="alert"></p><button class="primary full" type="submit">${registering ? '가입하기' : '로그인'}</button></form><button id="authSwitch" class="auth-switch" type="button">${registering ? '이미 계정이 있나요? 로그인' : '처음이신가요? 회원가입'}</button></div></section>`;
+  view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${registering ? '회원가입' : '로그인'}</h2><p>${registering ? '나만의 장소와 컬렉션을 시작하세요.' : '저장한 장소를 다시 만나보세요.'}</p>${authViewState.notice ? `<p class="auth-notice">${esc(authViewState.notice)}</p>` : ''}<form id="authForm">${registering ? '<label class="field"><span>표시 이름</span><input id="authDisplayName" autocomplete="name" maxlength="40" required /></label>' : ''}<label class="field"><span>이메일</span><input id="authEmail" type="email" autocomplete="email" maxlength="254" required /></label><label class="field"><span>비밀번호</span><input id="authPassword" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" minlength="8" maxlength="128" required /></label><p id="authError" class="auth-error" role="alert">${esc(authViewState.error || '')}</p><button class="primary full" type="submit">${registering ? '가입하기' : '로그인'}</button></form><button id="authSwitch" class="auth-switch" type="button">${registering ? '이미 계정이 있나요? 로그인' : '처음이신가요? 회원가입'}</button></div></section>`;
   $('#authSwitch').onclick = () => ensureAuthController().setMode(registering ? 'login' : 'register');
   if (YYJSupabaseAuth.isEmailOtpEnabled() && !registering) {
     const otpButton = document.createElement('button'); otpButton.type = 'button'; otpButton.className = 'secondary full'; otpButton.textContent = '이메일 인증코드로 로그인'; otpButton.onclick = () => ensureAuthController().setMode('otp-request'); $('#authForm').after(otpButton);
+  }
+  if (YYJSupabaseAuth.isGoogleOAuthEnabled && YYJSupabaseAuth.isGoogleOAuthEnabled() && !registering) {
+    const googleButton = document.createElement('button'); googleButton.id = 'googleLoginButton'; googleButton.type = 'button'; googleButton.className = 'secondary full google-login-button'; googleButton.disabled = authViewState.pending; googleButton.textContent = authViewState.pending ? 'Google 로그인 준비 중…' : 'Google로 로그인'; googleButton.onclick = () => ensureAuthController().startGoogleOAuth();
+    $('#authForm').after(googleButton);
   }
   $('#authForm').onsubmit = async event => {
     event.preventDefault();
@@ -123,7 +127,7 @@ function renderOtpAuth() {
 function renderOtpIssue() {
   document.body.classList.add('auth-visible'); setHeader('여기였지', '인증 안내');
   const snapshot = authViewState; const conflict = snapshot.mode === 'otp-conflict';
-  view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${conflict ? '인증 계정 충돌' : '계정 연결 필요'}</h2><p class="auth-issue">${esc(snapshot.error || '')}</p><div class="auth-actions"><button id="otpIssueCancel" class="primary full" type="button" ${snapshot.pending ? 'disabled' : ''}>${conflict ? '이메일 인증 종료 후 다시 시도' : '비밀번호 로그인으로 돌아가기'}</button></div></div></section>`;
+  view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${conflict ? '인증 계정 충돌' : '계정 연결 필요'}</h2><p class="auth-issue">${esc(snapshot.error || '')}</p><div class="auth-actions"><button id="otpIssueCancel" class="primary full" type="button" ${snapshot.pending ? 'disabled' : ''}>${conflict ? '인증 종료 후 다시 시도' : '비밀번호 로그인으로 돌아가기'}</button></div></div></section>`;
   const controller = ensureAuthController(); $('#otpIssueCancel').onclick = () => controller.cancelOtp();
 }
 
