@@ -18,6 +18,7 @@ delete childEnv.SUPABASE_PUBLISHABLE_KEY;
 delete childEnv.SUPABASE_JWT_ISSUER;
 delete childEnv.SUPABASE_JWKS_URL;
 delete childEnv.SUPABASE_JWT_AUDIENCE;
+delete childEnv.SUPABASE_GOOGLE_OAUTH_ENABLED;
 const child = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
   env: childEnv,
   stdio: ['ignore', 'pipe', 'pipe']
@@ -53,6 +54,11 @@ function createClient() {
 
 const jsonOptions = (method, body) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /authUserId|jwt|claims|passwordHash|passwordSalt|sessionId|sessionToken|tokenHash|legacySessionToken/i);
+const assertLinkResponseSecurity = result => {
+  assert.equal(result.response.headers.get('cache-control'), 'no-store');
+  assert.equal(result.response.headers.get('set-cookie'), null);
+  assertNoSecrets(result.body);
+};
 
 (async () => {
   const anonymous = createClient();
@@ -105,6 +111,71 @@ const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /authU
     const login = await loginClient('/api/auth/login', jsonOptions('POST', { email: 'a@example.com', password: 'password-A' }));
     assert.equal(login.response.status, 200);
     assertNoSecrets(login.body);
+
+    const linkCookie = registerA.response.headers.get('set-cookie').split(';')[0];
+    async function linkRequest(options = {}) {
+      const cookie = Object.prototype.hasOwnProperty.call(options, 'cookie') ? options.cookie : linkCookie;
+      const origin = options.origin;
+      const authorization = Object.prototype.hasOwnProperty.call(options, 'authorization') ? options.authorization : 'Bearer test-token';
+      const body = Object.prototype.hasOwnProperty.call(options, 'body') ? options.body : { password: 'password-A' };
+      const headers = { 'content-type': 'application/json' };
+      if (cookie) headers.cookie = cookie;
+      if (origin !== undefined) headers.origin = origin;
+      if (authorization !== undefined) headers.authorization = authorization;
+      const response = await fetch(`${baseUrl}/api/auth/link-supabase`, { method: 'POST', headers, body: JSON.stringify(body) });
+      const text = await response.text();
+      return { response, body: text ? JSON.parse(text) : null };
+    }
+    const missingOriginLink = await linkRequest({ origin: undefined });
+    assert.equal(missingOriginLink.response.status, 403);
+    assert.equal(missingOriginLink.body.error, 'invalid_origin');
+    assert.equal(missingOriginLink.body.message, '허용되지 않은 요청 출처입니다.');
+    assert.equal(missingOriginLink.response.headers.get('cache-control'), 'no-store');
+    assert.equal(missingOriginLink.response.headers.get('set-cookie'), null);
+    assertLinkResponseSecurity(missingOriginLink);
+    const wrongOriginLink = await linkRequest({ origin: 'https://evil.example.test' });
+    assert.equal(wrongOriginLink.response.status, 403);
+    assert.equal(wrongOriginLink.body.error, 'invalid_origin');
+    assertLinkResponseSecurity(wrongOriginLink);
+    const noCookieLink = await linkRequest({ cookie: '', origin: baseUrl });
+    assert.equal(noCookieLink.response.status, 401);
+    assert.equal(noCookieLink.body.error, 'legacy_session_required');
+    assert.equal(noCookieLink.body.message, '로그인이 필요합니다.');
+    assertLinkResponseSecurity(noCookieLink);
+    const noBearerLink = await linkRequest({ authorization: undefined, origin: baseUrl });
+    assert.equal(noBearerLink.response.status, 401);
+    assert.equal(noBearerLink.body.error, 'bearer_required');
+    assert.equal(noBearerLink.body.message, '인증을 확인할 수 없습니다.');
+    assertLinkResponseSecurity(noBearerLink);
+    const malformedLink = await linkRequest({ authorization: 'Basic abc', origin: baseUrl });
+    assert.equal(malformedLink.response.status, 401);
+    assert.equal(malformedLink.body.error, 'invalid_authorization');
+    assert.equal(malformedLink.body.message, '인증을 확인할 수 없습니다.');
+    assertLinkResponseSecurity(malformedLink);
+    const wrongPasswordLink = await linkRequest({ origin: baseUrl, body: { password: 'wrong-password' } });
+    assert.equal(wrongPasswordLink.response.status, 401);
+    assert.equal(wrongPasswordLink.body.error, 'reauthentication_failed');
+    assert.equal(wrongPasswordLink.body.message, '비밀번호를 확인해 주세요.');
+    assertLinkResponseSecurity(wrongPasswordLink);
+    const invalidBodyLink = await linkRequest({ origin: baseUrl, body: {} });
+    assert.equal(invalidBodyLink.response.status, 400);
+    assert.equal(invalidBodyLink.body.error, 'validation_error');
+    assert.equal(invalidBodyLink.body.message, '요청 형식이 올바르지 않습니다.');
+    assertLinkResponseSecurity(invalidBodyLink);
+    const unavailableLink = await linkRequest({ origin: baseUrl });
+    assert.equal(unavailableLink.response.status, 503);
+    assert.equal(unavailableLink.body.error, 'auth_link_unavailable');
+    assert.equal(unavailableLink.body.message, '인증 연결을 사용할 수 없습니다.');
+    assertLinkResponseSecurity(unavailableLink);
+    const nonJsonLinkResponse = await fetch(`${baseUrl}/api/auth/link-supabase`, { method: 'POST', headers: { origin: baseUrl, cookie: linkCookie, authorization: 'Bearer test-token', 'content-type': 'text/plain' }, body: '{"password":"password-A"}' });
+    const nonJsonLink = { response: nonJsonLinkResponse, body: await nonJsonLinkResponse.json() };
+    assert.equal(nonJsonLink.response.status, 400);
+    assert.equal(nonJsonLink.body.error, 'json_required');
+    assert.equal(nonJsonLink.body.message, 'JSON 형식의 요청만 허용됩니다.');
+    assertLinkResponseSecurity(nonJsonLink);
+    for (const linkResult of [missingOriginLink, wrongOriginLink, noCookieLink, noBearerLink, malformedLink, wrongPasswordLink, invalidBodyLink, unavailableLink]) assertNoSecrets(linkResult.body);
+    assert.equal((await userA('/api/auth/me')).response.status, 200);
+    assert.equal((await userA('/api/places')).response.status, 200);
     const wrongPassword = await anonymous('/api/auth/login', jsonOptions('POST', { email: 'a@example.com', password: 'not-the-password' }));
     assert.equal(wrongPassword.response.status, 401);
     assert.equal(wrongPassword.body.message, '이메일 또는 비밀번호가 올바르지 않습니다.');

@@ -10,6 +10,7 @@ const { hashPassword, verifyPassword } = require('./auth/password');
 const { createSupabaseJwtVerifier } = require('./auth/supabase-jwt');
 const { resolveRequestAuthentication } = require('./auth/request-auth');
 const { resolvePublicSupabaseConfig } = require('./auth/public-supabase-config');
+const { resolveSupabaseUserLinkResponse } = require('./auth/user-linking-route');
 
 const PORT = Number(process.env.PORT || 4100);
 const DATA_FILE = process.env.DATA_FILE ? path.resolve(process.env.DATA_FILE) : path.join(__dirname, 'data', 'store.json');
@@ -25,7 +26,8 @@ function json(res, status, payload, headers = {}) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
-    ...headers
+    ...headers,
+    ...(res.__authLinkNoStore ? { 'Cache-Control': 'no-store' } : {})
   });
   res.end(body);
 }
@@ -142,6 +144,7 @@ function validatePlace(body) {
 
 function validateMutationRequest(req, url, res) {
   if (!['POST', 'PUT', 'DELETE'].includes(req.method)) return true;
+  if (url.pathname === '/api/auth/link-supabase') res.__authLinkNoStore = true;
   const origin = req.headers.origin;
   if (origin && origin !== url.origin) {
     json(res, 403, { error: 'invalid_origin', message: '허용되지 않은 요청 출처입니다.' });
@@ -196,6 +199,11 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.password !== 'string' || !user || !verifyPassword(body.password, user)) return authJson(res, 401, { error: 'invalid_credentials', message: '이메일 또는 비밀번호가 올바르지 않습니다.' });
       const sessionToken = await createSession(storage, user.id);
       return authJson(res, 200, { item: publicUser(user) }, { 'Set-Cookie': sessionCookie(req, sessionToken) });
+    }
+
+    if (pathname === '/api/auth/link-supabase' && req.method === 'POST') {
+      const outcome = await resolveSupabaseUserLinkResponse({ req, url, storage, jwtVerifier, readBody });
+      return authJson(res, outcome.status, outcome.payload);
     }
 
     if (pathname === '/api/auth/logout' && req.method === 'POST') {

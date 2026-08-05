@@ -36,7 +36,7 @@ function runServer(env, expectHealth) {
 
 function baseEnvironment(directory, port) {
   const env = { ...process.env, NODE_ENV: 'test', STORAGE_DRIVER: 'json', PORT: String(port), DATA_FILE: path.join(directory, 'store.json') };
-  for (const key of ['SUPABASE_URL', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_JWT_ISSUER', 'SUPABASE_JWKS_URL', 'SUPABASE_JWT_AUDIENCE', 'SUPABASE_EMAIL_OTP_ENABLED']) delete env[key];
+  for (const key of ['SUPABASE_URL', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_JWT_ISSUER', 'SUPABASE_JWKS_URL', 'SUPABASE_JWT_AUDIENCE', 'SUPABASE_EMAIL_OTP_ENABLED', 'SUPABASE_GOOGLE_OAUTH_ENABLED']) delete env[key];
   return env;
 }
 
@@ -49,14 +49,14 @@ function baseEnvironment(directory, port) {
     assert.equal(normal.timedOut, false);
     assert.equal(normal.exitCode, null);
 
-    const incompatibleDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'yeogiyeotji-auth-init-')); directories.push(incompatibleDirectory);
-    const incompatibleEnv = { ...baseEnvironment(incompatibleDirectory, await availablePort()), SUPABASE_URL: 'https://test-project.supabase.co' };
-    const incompatible = await runServer(incompatibleEnv, true);
-    assert.equal(incompatible.healthReached, false);
-    assert.equal(incompatible.timedOut, false);
-    assert.equal(incompatible.exitCode, 1);
-    assert.match(incompatible.stderr, /Server initialization failed: Authentication configuration is invalid/);
-    assert.doesNotMatch(incompatible.stderr, /test-project\.supabase\.co|\.well-known\/jwks\.json|SUPABASE_URL|Error:|\bat server\b|stack/i);
+    const compatibleDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'yeogiyeotji-auth-init-')); directories.push(compatibleDirectory);
+    const compatibleEnv = { ...baseEnvironment(compatibleDirectory, await availablePort()), SUPABASE_URL: 'https://test-project.supabase.co' };
+    const compatible = await runServer(compatibleEnv, true);
+    assert.equal(compatible.healthReached, true);
+    assert.equal(compatible.timedOut, false);
+    assert.equal(compatible.exitCode, null);
+    assert.doesNotMatch(compatible.stderr, /Server initialization failed: Authentication configuration is invalid/);
+    assert.doesNotMatch(compatible.stderr, /test-project\.supabase\.co|\.well-known\/jwks\.json|SUPABASE_URL|Error:|\bat server\b|stack/i);
 
     const partialDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'yeogiyeotji-auth-init-')); directories.push(partialDirectory);
     const partial = await runServer({ ...baseEnvironment(partialDirectory, await availablePort()), SUPABASE_JWT_AUDIENCE: 'private-test-audience' }, true);
@@ -79,7 +79,7 @@ function baseEnvironment(directory, port) {
     assert.equal(otpConfig.exitCode, 1);
     assert.match(otpConfig.stderr, /Server initialization failed: Authentication configuration is invalid/);
     assert.doesNotMatch(otpConfig.stderr, /SUPABASE_EMAIL_OTP_ENABLED|true|Error:|stack|at /i);
-    console.log('Server auth initialization tests passed: disabled health, incompatible storage, and partial configuration scenarios');
+    console.log('Server auth initialization tests passed: disabled health, JSON JWT compatibility, and partial configuration scenarios');
   } finally {
     for (const directory of directories) fs.rmSync(directory, { recursive: true, force: true });
     for (const directory of directories) assert.equal(fs.existsSync(directory), false);
