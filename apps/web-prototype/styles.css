@@ -126,6 +126,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .auth-issue { color: var(--danger); }
 .auth-actions { display: grid; gap: 10px; margin-top: 10px; }
 .otp-email { color: var(--muted); overflow-wrap: anywhere; }
+.google-login-button { min-height: 44px; }
 .auth-card button:disabled, .auth-card input:disabled { opacity: .6; cursor: not-allowed; }
 @media (max-width: 420px) { .auth-card { padding: 20px 16px; } .auth-card button { min-height: 44px; } }
 .collection-privacy { margin-top: 16px; }

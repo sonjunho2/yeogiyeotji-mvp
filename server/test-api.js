@@ -65,7 +65,7 @@ const assertNoSecrets = body => assert.doesNotMatch(JSON.stringify(body), /authU
     assert.equal(authConfig.status, 200);
     assert.equal(authConfig.headers.get('cache-control'), 'no-store');
     const authConfigBody = await authConfig.json();
-    assert.deepEqual(authConfigBody, { item: { enabled: false, emailOtpEnabled: false } });
+    assert.deepEqual(authConfigBody, { item: { enabled: false, emailOtpEnabled: false, googleOAuthEnabled: false } });
     assert.doesNotMatch(JSON.stringify(authConfigBody), /secret|serviceRole|service_role|processEnv|process\.env/i);
     const postConfig = await fetch(`${baseUrl}/api/auth/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     assert.notEqual(postConfig.status, 200);

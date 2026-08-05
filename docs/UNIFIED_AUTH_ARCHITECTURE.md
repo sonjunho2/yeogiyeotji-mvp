@@ -185,3 +185,17 @@ provider secret은 브라우저 코드나 Git 저장소에 넣지 않는다. Hos
 - 기존 비밀번호 로그인 종료일
 
 아직 `auth_user_id`를 실제 계정에 연결하는 HTTP API, OAuth, JWT, OTP, 프런트엔드 흐름은 활성화하지 않는다. 실제 인증 코드, 추가 migration SQL, package 설치, `.env` 생성, 키·비밀번호 요청은 이 문서 작업의 범위가 아니다.
+
+## 5-1 Google OAuth 클라이언트 기반
+
+앞 절의 인증 미활성화 설명은 이전 단계의 기준 상태다. 이번 단계에서는 Google OAuth 클라이언트 진입 구조만 추가하며, 운영 Google provider 활성화는 아직 수행하지 않았고 실제 Google 로그인 검증도 아직 수행하지 않았다.
+
+- `SUPABASE_GOOGLE_OAUTH_ENABLED`의 기본값은 `false`다. 정확한 `true`와 정확한 `false`만 허용하며, 다른 값은 잘못된 공개 Supabase 설정으로 거부한다. flag가 false이면 Google 로그인 버튼과 OAuth 시작 기능을 비활성화한다.
+- Supabase Dashboard에서 Google provider를 설정한다. Google OAuth Client ID와 Client Secret은 브라우저 JavaScript에 저장하지 않는다. Google OAuth Client ID와 Client Secret은 Git 저장소에 커밋하지 않는다. Client Secret은 공개 환경변수나 `/api/auth/config` 응답에 포함하지 않는다.
+- Supabase SDK의 `signInWithOAuth()`를 사용하고 `provider: 'google'`과 `redirectTo`만 전달한다. provider access token과 provider refresh token을 직접 요청하거나 저장하지 않는다. Supabase SDK가 반환하는 OAuth URL이나 token을 사용자 화면, 로그 또는 애플리케이션 반환값에 노출하지 않는다.
+- `redirectTo`는 `location.origin`과 `location.pathname`으로 구성한다. query와 hash를 제거하며 `http:`와 `https:`만 허용한다. `file:` 및 기타 protocol에서는 시작하지 않고, pathname이 비어 있으면 `/`를 사용한다. 임의의 외부 origin은 허용하지 않으며 필요한 운영·개발 주소와 경로를 Supabase Dashboard의 Redirect URLs 허용 목록에 등록한다.
+- 기존 이메일/비밀번호 로그인과 기존 이메일 OTP 로그인을 유지한다. Supabase JWT와 기존 `yyj_session`은 현재 구조에서 공존한다.
+- `public.users` 자동 생성은 하지 않는다. `auth_user_id` 자동 연결도 하지 않으며 이메일 주소가 같다는 이유로 자동 병합하지 않는다. 미연결 인증 계정은 401, 인증 충돌은 409로 처리한다. 인증 충돌 상태에서는 인증 종료 후 다시 시도하도록 안내한다.
+- provider 계정 자동 연결·병합은 미구현이다. 서버의 명시적 사용자 연결 절차는 후속 단계에서 구현한다.
+- Kakao OAuth 미구현
+- Apple OAuth 미구현

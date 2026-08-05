@@ -9,6 +9,7 @@
     "test:web-supabase-auth": "node server/test-web-supabase-auth.js",
     "test:web-auth-controller": "node server/test-web-auth-controller.js",
     "test:web-auth-encoding": "node server/test-web-auth-encoding.js",
+    "test:web-google-oauth": "node server/test-web-google-oauth-integration.js",
     "test:storage": "node server/test-storage.js",
     "test:api": "node server/test-api.js",
     "test:postgres": "node server/test-postgres.js",
@@ -20,7 +21,7 @@
     "test:server-auth-init": "node server/test-server-auth-init.js",
     "db:migrate": "node server/db/migrate.js",
     "db:import-json": "node server/db/import-json.js",
-    "test": "npm run test:public-supabase-config && npm run test:web-supabase-auth && npm run test:web-auth-controller && npm run test:web-auth-encoding && npm run test:storage && npm run test:api && npm run test:legacy-recovery && npm run test:web-datastore && npm run test:service-worker && npm run test:supabase-jwt && npm run test:request-auth && npm run test:server-auth-init"
+    "test": "npm run test:public-supabase-config && npm run test:web-supabase-auth && npm run test:web-auth-controller && npm run test:web-auth-encoding && npm run test:web-google-oauth && npm run test:storage && npm run test:api && npm run test:legacy-recovery && npm run test:web-datastore && npm run test:service-worker && npm run test:supabase-jwt && npm run test:request-auth && npm run test:server-auth-init"
   },
   "dependencies": {
     "jose": "^6.2.7",
