@@ -151,6 +151,10 @@
     return (await request('/api/auth/login', { method: 'POST', body: JSON.stringify(credentials), useBearer: false })).item;
   }
 
+  async function linkSupabaseAccount(password) {
+    return await request('/api/auth/link-supabase', { method: 'POST', body: JSON.stringify({ password }), useBearer: true });
+  }
+
   async function logout() {
     const results = await Promise.allSettled([request('/api/auth/logout', { method: 'POST', body: '{}', useBearer: false }), window.YYJSupabaseAuth.signOut()]);
     const failure = results.find(result => result.status === 'rejected');
@@ -222,5 +226,5 @@
     return mode === 'server' ? '서버에 저장 중' : '이 브라우저에 저장 중';
   }
 
-  window.YYJDataStore = { initialize, register, login, logout, getCurrentUser, loadServerData, listPlaces, createPlace, deletePlace, listCollections, createCollection, checkServer, statusText, AuthenticationError, getMode: () => mode, isFallback: () => fallback };
+  window.YYJDataStore = { initialize, register, login, linkSupabaseAccount, logout, getCurrentUser, loadServerData, listPlaces, createPlace, deletePlace, listCollections, createCollection, checkServer, statusText, AuthenticationError, getMode: () => mode, isFallback: () => fallback };
 })();

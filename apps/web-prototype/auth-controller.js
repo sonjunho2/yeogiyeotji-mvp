@@ -26,7 +26,36 @@
     async function startGoogleOAuth() { if (state.mode !== 'login') return null; return run(async () => { const result = await supabaseAuth.signInWithGoogle(); setState({ pending: false, notice: 'Google 로그인 화면으로 이동합니다.' }); return result; }, 'Google 로그인을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.'); }
     function setMode(mode) { const allowed = ['login', 'register', 'otp-request', 'otp-verify', 'otp-unlinked', 'otp-conflict']; if (allowed.includes(mode) && !state.pending) setState({ mode, error: '', notice: '', issue: '' }); }
     function handleInitialIssue(issue) { if (issueText[issue]) setState({ mode: issue === 'auth_user_not_linked' ? 'otp-unlinked' : 'otp-conflict', issue, error: issueText[issue] }); }
-    return { getState: () => ({ ...state }), setMode, requestOtp, verifyOtp, resendOtp, cancelOtp, handleInitialIssue, startGoogleOAuth };
+    async function linkExistingAccount(email, password) {
+      if (state.mode !== 'otp-unlinked' || state.pending) return null;
+      setState({ pending: true, error: '', notice: '', issue: '' });
+      try {
+        await dataStore.login({ email, password });
+        await dataStore.linkSupabaseAccount(password);
+        const user = await dataStore.getCurrentUser();
+        const data = await dataStore.loadServerData();
+        setState({ pending: false, issue: '' });
+        onAuthenticated(user, data.places, data.collections);
+        return { user, data };
+      } catch (error) {
+        const code = serverCode(error);
+        const messages = {
+          invalid_credentials: '기존 계정의 이메일 또는 비밀번호를 확인해 주세요.',
+          reauthentication_failed: '기존 계정의 이메일 또는 비밀번호를 확인해 주세요.',
+          auth_link_conflict: '계정을 연결할 수 없습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
+          auth_identity_conflict: '계정을 연결할 수 없습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
+          bearer_required: 'Google 인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
+          invalid_authorization: 'Google 인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
+          invalid_token: 'Google 인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
+          auth_link_unavailable: '계정 연결을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.',
+          validation_error: '입력값을 확인해 주세요.',
+        };
+        if (code === 'auth_link_conflict' || code === 'auth_identity_conflict') setState({ mode: 'otp-conflict', issue: code, error: messages[code], pending: false });
+        else setState({ pending: false, error: messages[code] || '계정을 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.' });
+        return null;
+      }
+    }
+    return { getState: () => ({ ...state }), setMode, requestOtp, verifyOtp, linkExistingAccount, resendOtp, cancelOtp, handleInitialIssue, startGoogleOAuth };
   }
   window.YYJAuthController = { create };
 })();

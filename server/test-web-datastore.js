@@ -197,6 +197,20 @@ async function assertPass15MissingCoverage() {
   let failed = false; const tokenContext = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': ok({ item: { id: 'u' } }), '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }) }, { getAccessToken: async () => { if (failed) { const error = new Error('raw'); error.code = 'SUPABASE_AUTH_STATE_ERROR'; throw error; } return null; } }); await tokenContext.store.initialize([], []); failed = true; await assert.rejects(tokenContext.store.getCurrentUser(), error => error.code === 'SUPABASE_AUTH_STATE_ERROR'); assert.equal(tokenContext.store.getMode(), 'server'); assert.equal(tokenContext.store.isFallback(), false);
 }
 
+async function assertSupabaseLinkRequest() {
+  const context = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/link-supabase': ok({ item: { id: 'u' }, idempotent: true }) }, { getAccessToken: async () => 'JWT_SECRET_SENTINEL_5_3' });
+  const result = await context.store.linkSupabaseAccount('PASSWORD_SECRET_SENTINEL_5_3');
+  assert.equal(JSON.stringify(result), JSON.stringify({ item: { id: 'u' }, idempotent: true }));
+  assert.equal(context.getAccessTokenCount(), 1);
+  const request = context.optionsLog[0];
+  assert.equal(request.path, '/api/auth/link-supabase');
+  assert.equal(request.options.method, 'POST');
+  assert.equal(request.options.credentials, 'same-origin');
+  assert.equal(request.options.headers['content-type'], 'application/json');
+  assert.equal(request.options.headers.Authorization, 'Bearer JWT_SECRET_SENTINEL_5_3');
+  assert.deepEqual(JSON.parse(request.options.body), { password: 'PASSWORD_SECRET_SENTINEL_5_3' });
+}
+
 (async () => {
   await assertRenderHttps();
   await assertLocalhost();
@@ -212,5 +226,6 @@ async function assertPass15MissingCoverage() {
   await assertFallbackErrors();
   await assertLogoutOutcomes();
   await assertPass15MissingCoverage();
+  await assertSupabaseLinkRequest();
   console.log('Web datastore tests passed: Render HTTPS, localhost, static HTTPS fallback, and file protocol');
 })().catch(error => { console.error(`Web datastore tests failed: ${error.message}`); process.exitCode = 1; });
