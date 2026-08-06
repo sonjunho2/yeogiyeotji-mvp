@@ -36,8 +36,9 @@
         await dataStore.linkSupabaseAccount(password);
         const user = await dataStore.getCurrentUser();
         const data = await dataStore.loadServerData();
-        linkLegacySessionActive = false; setState({ pending: false, issue: '' });
+        setState({ pending: false, issue: '' });
         onAuthenticated(user, data.places, data.collections);
+        linkLegacySessionActive = false;
         return { user, data };
       } catch (error) {
         if (linkLegacySessionActive) {

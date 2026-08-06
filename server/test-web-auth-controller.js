@@ -34,7 +34,8 @@ function setup(overrides = {}) {
   }) };
   const loaded = load();
   const onAuthenticated = overrides.onAuthenticated || ((...args) => { calls.push(['onAuthenticated', ...args]); if (sequence) sequence.push('onAuthenticated'); authenticated.push(args); });
-  const controller = loaded.api.create({ supabaseAuth, dataStore, onChange: snapshot => changes.push(snapshot), onAuthenticated });
+  const onChange = snapshot => { changes.push(snapshot); if (overrides.onChange) overrides.onChange(snapshot); };
+  const controller = loaded.api.create({ supabaseAuth, dataStore, onChange, onAuthenticated });
   return { controller, calls, changes, authenticated, deferred, api: loaded.api, context: loaded.context };
 }
 
@@ -123,6 +124,39 @@ async function assertOrdinaryCancelSkipsLegacyCleanup() {
   t.controller.setMode('otp-verify'); await t.controller.cancelOtp(); assert.equal(cleanupCalls, 0); assert.equal(signOutCalls, 1); assert.deepEqual(plain(t.controller.getState()), { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' });
 }
 
+async function assertCallbackFailureCleanup() {
+  const makeDataStore = (counters, sequence) => ({
+    login: async () => { counters.login += 1; sequence.push('login'); },
+    linkSupabaseAccount: async () => { counters.linkSupabaseAccount += 1; sequence.push('linkSupabaseAccount'); },
+    getCurrentUser: async () => { counters.getCurrentUser += 1; sequence.push('getCurrentUser'); return { id: 'callback-user' }; },
+    loadServerData: async () => { counters.loadServerData += 1; sequence.push('loadServerData'); return { places: [], collections: [] }; },
+    logoutLegacySession: async () => { counters.logoutLegacySession += 1; sequence.push('logoutLegacySession'); }
+  });
+  const runCase = async type => {
+    const counters = { login: 0, linkSupabaseAccount: 0, getCurrentUser: 0, loadServerData: 0, logoutLegacySession: 0, onAuthenticated: 0, signOut: 0 }; const sequence = [];
+    let callbackFailed = false;
+    const t = setup({ sequence, dataStore: makeDataStore(counters, sequence), onChange: snapshot => { if (type === 'onChange' && !callbackFailed && snapshot.pending === false && snapshot.issue === '') { sequence.push('onChange'); callbackFailed = true; throw new Error('CALLBACK_RAW_SENTINEL'); } }, onAuthenticated: () => { counters.onAuthenticated += 1; sequence.push('onAuthenticated'); if (type === 'onAuthenticated') throw new Error('AUTHENTICATED_RAW_SENTINEL'); }, supabaseAuth: { signOut: async () => { counters.signOut += 1; sequence.push('signOut'); } } });
+    t.controller.handleInitialIssue('auth_user_not_linked');
+    const result = await t.controller.linkExistingAccount('existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3');
+    assert.equal(result, null);
+    assert.deepEqual(counters, type === 'onChange' ? { login: 1, linkSupabaseAccount: 1, getCurrentUser: 1, loadServerData: 1, logoutLegacySession: 1, onAuthenticated: 0, signOut: 0 } : { login: 1, linkSupabaseAccount: 1, getCurrentUser: 1, loadServerData: 1, logoutLegacySession: 1, onAuthenticated: 1, signOut: 0 });
+    assert.equal(t.controller.getState().pending, false);
+    assert.equal(t.controller.getState().issue, '');
+    assert.equal(t.controller.getState().mode, 'otp-unlinked');
+    assert.equal(t.controller.getState().error, '계정을 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    assert.ok(t.changes.length > 0);
+    assertNoLinkSensitiveData(t.controller.getState(), t.changes, ['existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3', 'CALLBACK_RAW_SENTINEL', 'AUTHENTICATED_RAW_SENTINEL']);
+    assert.deepEqual(sequence, type === 'onChange' ? ['login', 'linkSupabaseAccount', 'getCurrentUser', 'loadServerData', 'onChange', 'logoutLegacySession'] : ['login', 'linkSupabaseAccount', 'getCurrentUser', 'loadServerData', 'onAuthenticated', 'logoutLegacySession']);
+    await t.controller.cancelOtp();
+    assert.equal(counters.logoutLegacySession, 1);
+    assert.equal(counters.signOut, 1);
+    assert.deepEqual(sequence, type === 'onChange' ? ['login', 'linkSupabaseAccount', 'getCurrentUser', 'loadServerData', 'onChange', 'logoutLegacySession', 'signOut'] : ['login', 'linkSupabaseAccount', 'getCurrentUser', 'loadServerData', 'onAuthenticated', 'logoutLegacySession', 'signOut']);
+    assert.deepEqual(plain(t.controller.getState()), { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' });
+  };
+  await runCase('onChange');
+  await runCase('onAuthenticated');
+}
+
 async function run() {
   let t = setup();
   assert.deepEqual(Object.keys(t.api).sort(), ['create']);
@@ -182,6 +216,7 @@ async function run() {
   await assertPartialCancelFailureLifecycle();
   await assertSuccessfulLinkClearsCleanupFlag();
   await assertOrdinaryCancelSkipsLegacyCleanup();
+  await assertCallbackFailureCleanup();
 
   await assertInitialAndLinkConflictDiffer();
   await assertLinkStaticContract();
