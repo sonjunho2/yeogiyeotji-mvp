@@ -50,7 +50,7 @@ assert.match(authSource, /signInWithOAuth/);
 assert.match(authSource, /provider: 'google'/);
 assert.doesNotMatch(authSource, /console\.(log|error).*?(access_token|refresh_token|oauth)/i);
 assert.match(controllerSource, /startGoogleOAuth/);
-assert.match(workerSource, /yeogiyeotji-v9/);
+assert.match(workerSource, /yeogiyeotji-v10/);
 
 let h = createHarness();
 render(h, { mode: 'login', pending: false, notice: '', error: '' });

@@ -152,10 +152,38 @@ async function assertFallbackErrors() {
 
 async function assertLogoutOutcomes() {
   const base = { '/api/auth/logout': ok({ ok: true }) };
-  const success = createContext({ protocol: 'https:', hostname: 'example.test' }, base); await success.store.logout(); assert.equal(success.calls.filter(path => path === '/api/auth/logout').length, 1); assert.equal(success.getSignOutCount(), 1);
-  const serverFailure = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': new Error('raw server logout') }); await assert.rejects(serverFailure.store.logout(), error => error.code === 'LOGOUT_FAILED' && !error.message.includes('raw')); assert.equal(serverFailure.getSignOutCount(), 1);
-  const supabaseFailure = createContext({ protocol: 'https:', hostname: 'example.test' }, base, { signOut: async () => { throw new Error('raw supabase logout'); } }); await assert.rejects(supabaseFailure.store.logout(), error => error.code === 'LOGOUT_FAILED' && !error.message.includes('raw')); assert.equal(supabaseFailure.calls.filter(path => path === '/api/auth/logout').length, 1); assert.equal(supabaseFailure.getSignOutCount(), 1);
-  const bothFailure = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': new Error('raw server') }, { signOut: async () => { throw new Error('raw supabase'); } }); await assert.rejects(bothFailure.store.logout(), error => error.code === 'LOGOUT_FAILED'); assert.equal(bothFailure.getSignOutCount(), 1);
+  const success = createContext({ protocol: 'https:', hostname: 'example.test' }, base);
+  await success.store.logout();
+  assert.equal(success.calls.filter(path => path === '/api/auth/logout').length, 1);
+  assert.equal(success.getSignOutCount(), 1);
+  const serverFailure = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': new Error('raw server logout') });
+  await assert.rejects(serverFailure.store.logout(), error => { assert.equal(error.code, 'LOGOUT_FAILED'); assert.equal(error.message.includes('raw server logout'), false); assert.equal(JSON.stringify(error).includes('raw server logout'), false); return true; });
+  assert.equal(serverFailure.calls.filter(path => path === '/api/auth/logout').length, 1);
+  assert.equal(serverFailure.getSignOutCount(), 1);
+  const supabaseFailure = createContext({ protocol: 'https:', hostname: 'example.test' }, base, { signOut: async () => { throw new Error('raw supabase logout'); } });
+  await assert.rejects(supabaseFailure.store.logout(), error => { assert.equal(error.code, 'LOGOUT_FAILED'); assert.equal(error.message.includes('raw supabase logout'), false); assert.equal(JSON.stringify(error).includes('raw supabase logout'), false); return true; });
+  assert.equal(supabaseFailure.calls.filter(path => path === '/api/auth/logout').length, 1);
+  assert.equal(supabaseFailure.getSignOutCount(), 1);
+  const bothFailure = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': new Error('raw server') }, { signOut: async () => { throw new Error('raw supabase'); } });
+  await assert.rejects(bothFailure.store.logout(), error => { assert.equal(error.code, 'LOGOUT_FAILED'); assert.equal(error.message.includes('raw server'), false); assert.equal(error.message.includes('raw supabase'), false); assert.equal(JSON.stringify(error).includes('raw server'), false); assert.equal(JSON.stringify(error).includes('raw supabase'), false); return true; });
+  assert.equal(bothFailure.calls.filter(path => path === '/api/auth/logout').length, 1);
+  assert.equal(bothFailure.getSignOutCount(), 1);
+}
+
+async function assertLogoutLegacySessionContract() {
+  const context = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/logout': ok({ ok: true }) });
+  assert.equal(typeof context.store.logoutLegacySession, 'function');
+  await context.store.logoutLegacySession();
+  assert.deepEqual(context.calls, ['/api/auth/logout']);
+  const request = context.optionsLog[0];
+  assert.equal(request.path, '/api/auth/logout'); assert.equal(request.options.method, 'POST'); assert.equal(request.options.body, '{}'); assert.equal(Object.prototype.hasOwnProperty.call(request.options.headers, 'Authorization'), false); assert.equal(context.getAccessTokenCount(), 0); assert.equal(context.getSignOutCount(), 0);
+  const source = fs.readFileSync('apps/web-prototype/data-store.js', 'utf8');
+  assert.equal((source.match(/async function logoutLegacySession\s*\(/g) || []).length, 1);
+  const legacyBody = source.slice(source.indexOf('async function logoutLegacySession'), source.indexOf('\n  async function logout()', source.indexOf('async function logoutLegacySession')));
+  assert.equal(legacyBody.includes("'/api/auth/logout'"), true); assert.equal(legacyBody.includes("method: 'POST'"), true); assert.equal(legacyBody.includes("body: '{}'"), true); assert.equal(legacyBody.includes('useBearer: false'), true); assert.equal(legacyBody.includes('signOut'), false);
+  const publicApiStart = source.indexOf('window.YYJDataStore = {'); const publicApiEnd = source.indexOf('};', publicApiStart); const publicApiBody = source.slice(publicApiStart, publicApiEnd); assert.equal((publicApiBody.match(/\blogoutLegacySession\b/g) || []).length, 1);
+  const logoutBody = source.slice(source.indexOf('async function logout()'), source.indexOf('\n  async function getCurrentUser'));
+  assert.equal(logoutBody.includes("request('/api/auth/logout"), false); assert.equal(logoutBody.includes('logoutLegacySession()'), true); assert.equal(logoutBody.includes('Promise.allSettled'), true); assert.equal(logoutBody.includes('YYJSupabaseAuth.signOut'), true);
 }
 
 async function assertPass15MissingCoverage() {
@@ -197,6 +225,20 @@ async function assertPass15MissingCoverage() {
   let failed = false; const tokenContext = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/health': ok({ ok: true }), '/api/auth/config': ok({ item: { enabled: true } }), '/api/auth/me': ok({ item: { id: 'u' } }), '/api/places': ok({ items: [] }), '/api/collections': ok({ items: [] }) }, { getAccessToken: async () => { if (failed) { const error = new Error('raw'); error.code = 'SUPABASE_AUTH_STATE_ERROR'; throw error; } return null; } }); await tokenContext.store.initialize([], []); failed = true; await assert.rejects(tokenContext.store.getCurrentUser(), error => error.code === 'SUPABASE_AUTH_STATE_ERROR'); assert.equal(tokenContext.store.getMode(), 'server'); assert.equal(tokenContext.store.isFallback(), false);
 }
 
+async function assertSupabaseLinkRequest() {
+  const context = createContext({ protocol: 'https:', hostname: 'example.test' }, { '/api/auth/link-supabase': ok({ item: { id: 'u' }, idempotent: true }) }, { getAccessToken: async () => 'JWT_SECRET_SENTINEL_5_3' });
+  const result = await context.store.linkSupabaseAccount('PASSWORD_SECRET_SENTINEL_5_3');
+  assert.equal(JSON.stringify(result), JSON.stringify({ item: { id: 'u' }, idempotent: true }));
+  assert.equal(context.getAccessTokenCount(), 1);
+  const request = context.optionsLog[0];
+  assert.equal(request.path, '/api/auth/link-supabase');
+  assert.equal(request.options.method, 'POST');
+  assert.equal(request.options.credentials, 'same-origin');
+  assert.equal(request.options.headers['content-type'], 'application/json');
+  assert.equal(request.options.headers.Authorization, 'Bearer JWT_SECRET_SENTINEL_5_3');
+  assert.deepEqual(JSON.parse(request.options.body), { password: 'PASSWORD_SECRET_SENTINEL_5_3' });
+}
+
 (async () => {
   await assertRenderHttps();
   await assertLocalhost();
@@ -211,6 +253,8 @@ async function assertPass15MissingCoverage() {
   await assertBearerRules();
   await assertFallbackErrors();
   await assertLogoutOutcomes();
+  await assertLogoutLegacySessionContract();
   await assertPass15MissingCoverage();
+  await assertSupabaseLinkRequest();
   console.log('Web datastore tests passed: Render HTTPS, localhost, static HTTPS fallback, and file protocol');
 })().catch(error => { console.error(`Web datastore tests failed: ${error.message}`); process.exitCode = 1; });

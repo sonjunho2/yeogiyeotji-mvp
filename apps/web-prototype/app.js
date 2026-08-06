@@ -37,8 +37,14 @@ let authController = null;
 let authViewState = { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' };
 
 function completeAuthentication(user, places, collections) {
-  state.user = user; state.places = places; state.collections = collections; state.selectedId = places[0]?.id || ''; state.tab = 'map';
-  document.body.classList.remove('auth-visible'); syncNav(); render();
+  try {
+    state.user = user; state.places = places; state.collections = collections; state.selectedId = places[0]?.id || ''; state.tab = 'map';
+    document.body.classList.remove('auth-visible'); syncNav(); render();
+  } catch (error) {
+    clearPrivateState();
+    document.body.classList.add('auth-visible');
+    throw error;
+  }
 }
 
 function ensureAuthController() {
@@ -125,10 +131,15 @@ function renderOtpAuth() {
 }
 
 function renderOtpIssue() {
-  document.body.classList.add('auth-visible'); setHeader('여기였지', '인증 안내');
-  const snapshot = authViewState; const conflict = snapshot.mode === 'otp-conflict';
-  view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${conflict ? '인증 계정 충돌' : '계정 연결 필요'}</h2><p class="auth-issue">${esc(snapshot.error || '')}</p><div class="auth-actions"><button id="otpIssueCancel" class="primary full" type="button" ${snapshot.pending ? 'disabled' : ''}>${conflict ? '인증 종료 후 다시 시도' : '비밀번호 로그인으로 돌아가기'}</button></div></div></section>`;
-  const controller = ensureAuthController(); $('#otpIssueCancel').onclick = () => controller.cancelOtp();
+  document.body.classList.add('auth-visible');
+  setHeader('여기였지', '인증 안내');
+  const snapshot = authViewState;
+  const conflict = snapshot.mode === 'otp-conflict';
+  const controller = ensureAuthController();
+  const form = conflict ? '' : `<form id="linkForm"><label class="field"><span>기존 계정 이메일</span><input id="linkEmail" type="email" maxlength="254" autocomplete="email" required ${snapshot.pending ? 'disabled' : ''}></label><label class="field"><span>기존 계정 비밀번호</span><input id="linkPassword" type="password" minlength="8" maxlength="128" autocomplete="current-password" required ${snapshot.pending ? 'disabled' : ''}></label><p id="authError" class="auth-error" role="alert">${esc(snapshot.error || '')}</p><button class="primary full" type="submit" ${snapshot.pending ? 'disabled' : ''}>${snapshot.pending ? '연결 중…' : '기존 계정 연결하기'}</button></form>`;
+  view.innerHTML = `<section class="auth-view"><div class="auth-card"><h2>${conflict ? '인증 계정 충돌' : '기존 계정 연결'}</h2><p>${conflict ? '' : '기존 여기였지 계정의 이메일과 비밀번호를 입력하면 저장한 장소와 컬렉션을 그대로 연결합니다.'}</p>${conflict ? `<p class="auth-issue">${esc(snapshot.error || '')}</p>` : form}<button id="otpIssueCancel" class="${conflict ? 'primary' : 'auth-switch'} full" type="button" ${snapshot.pending ? 'disabled' : ''}>${conflict ? '인증 종료 후 다시 시도' : '인증 종료'}</button></div></section>`;
+  if (!conflict) $('#linkForm').onsubmit = event => { event.preventDefault(); controller.linkExistingAccount($('#linkEmail').value, $('#linkPassword').value); };
+  $('#otpIssueCancel').onclick = () => controller.cancelOtp();
 }
 
 function esc(value = '') {
