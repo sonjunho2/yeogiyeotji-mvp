@@ -37,8 +37,14 @@ let authController = null;
 let authViewState = { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' };
 
 function completeAuthentication(user, places, collections) {
-  state.user = user; state.places = places; state.collections = collections; state.selectedId = places[0]?.id || ''; state.tab = 'map';
-  document.body.classList.remove('auth-visible'); syncNav(); render();
+  try {
+    state.user = user; state.places = places; state.collections = collections; state.selectedId = places[0]?.id || ''; state.tab = 'map';
+    document.body.classList.remove('auth-visible'); syncNav(); render();
+  } catch (error) {
+    clearPrivateState();
+    document.body.classList.add('auth-visible');
+    throw error;
+  }
 }
 
 function ensureAuthController() {

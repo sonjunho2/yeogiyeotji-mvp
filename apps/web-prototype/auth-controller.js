@@ -51,9 +51,9 @@
           reauthentication_failed: '기존 계정의 이메일 또는 비밀번호를 확인해 주세요.',
           auth_link_conflict: '계정을 연결할 수 없습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
           auth_identity_conflict: '계정을 연결할 수 없습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
-          bearer_required: 'Google 인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
-          invalid_authorization: 'Google 인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
-          invalid_token: 'Google 인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
+          bearer_required: '인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
+          invalid_authorization: '인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
+          invalid_token: '인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.',
           auth_link_unavailable: '계정 연결을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.',
           validation_error: '입력값을 확인해 주세요.',
         };
