@@ -6,6 +6,7 @@
   };
   function create({ supabaseAuth, dataStore, onChange = () => {}, onAuthenticated = () => {} }) {
     let state = { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' };
+    let linkLegacySessionActive = false;
     const emit = () => onChange({ ...state });
     const setState = patch => { state = { ...state, ...patch }; emit(); };
     const serverCode = error => error && error.payload && error.payload.error || error && error.error || error && error.code;
@@ -22,7 +23,7 @@
     async function requestOtp(email) { const result = await run(() => supabaseAuth.requestEmailOtp(email), '인증 코드를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.'); if (result) setState({ pending: false, otpEmail: result.email, mode: 'otp-verify', notice: '인증 코드를 보냈습니다. 받은 편지함을 확인해 주세요.' }); }
     async function verifyOtp(token) { const result = await run(async () => { await supabaseAuth.verifyEmailOtp(state.otpEmail, token); const user = await dataStore.getCurrentUser(); const data = await dataStore.loadServerData(); return { user, data }; }, '인증 코드가 올바르지 않거나 만료되었습니다.'); if (result) { setState({ pending: false }); onAuthenticated(result.user, result.data.places, result.data.collections); } }
     async function resendOtp() { if (!state.otpEmail) { setState({ error: '이메일 주소를 입력해 주세요.' }); return; } await requestOtp(state.otpEmail); }
-    async function cancelOtp() { if (state.pending) return; setState({ pending: true }); try { await supabaseAuth.signOut(); setState({ mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' }); } catch { setState({ pending: false, error: '인증을 종료하지 못했습니다. 잠시 후 다시 시도해 주세요.' }); } }
+    async function cancelOtp() { if (state.pending) return; setState({ pending: true }); try { if (linkLegacySessionActive) { const [legacyResult, supabaseResult] = await Promise.allSettled([dataStore.logoutLegacySession(), supabaseAuth.signOut()]); if (legacyResult.status === 'fulfilled') linkLegacySessionActive = false; if (legacyResult.status === 'rejected' || supabaseResult.status === 'rejected') throw (legacyResult.status === 'rejected' ? legacyResult.reason : supabaseResult.reason); } else await supabaseAuth.signOut(); setState({ mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' }); } catch { setState({ pending: false, error: '인증을 종료하지 못했습니다. 잠시 후 다시 시도해 주세요.' }); } }
     async function startGoogleOAuth() { if (state.mode !== 'login') return null; return run(async () => { const result = await supabaseAuth.signInWithGoogle(); setState({ pending: false, notice: 'Google 로그인 화면으로 이동합니다.' }); return result; }, 'Google 로그인을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.'); }
     function setMode(mode) { const allowed = ['login', 'register', 'otp-request', 'otp-verify', 'otp-unlinked', 'otp-conflict']; if (allowed.includes(mode) && !state.pending) setState({ mode, error: '', notice: '', issue: '' }); }
     function handleInitialIssue(issue) { if (issueText[issue]) setState({ mode: issue === 'auth_user_not_linked' ? 'otp-unlinked' : 'otp-conflict', issue, error: issueText[issue] }); }
@@ -31,13 +32,18 @@
       setState({ pending: true, error: '', notice: '', issue: '' });
       try {
         await dataStore.login({ email, password });
+        linkLegacySessionActive = true;
         await dataStore.linkSupabaseAccount(password);
         const user = await dataStore.getCurrentUser();
         const data = await dataStore.loadServerData();
-        setState({ pending: false, issue: '' });
+        linkLegacySessionActive = false; setState({ pending: false, issue: '' });
         onAuthenticated(user, data.places, data.collections);
         return { user, data };
       } catch (error) {
+        if (linkLegacySessionActive) {
+          try { await (dataStore.logoutLegacySession()); linkLegacySessionActive = false; }
+          catch { setState({ pending: false, error: '인증을 종료하지 못했습니다. 잠시 후 다시 시도해 주세요.' }); return null; }
+        }
         const code = serverCode(error);
         const messages = {
           invalid_credentials: '기존 계정의 이메일 또는 비밀번호를 확인해 주세요.',

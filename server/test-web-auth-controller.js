@@ -27,11 +27,11 @@ function setup(overrides = {}) {
     verifyEmailOtp: async (email, token) => { calls.push(['verifyEmailOtp', email, token]); },
     signOut: async () => { calls.push(['signOut']); }
   };
-  const dataStore = overrides.dataStore || {
+  const dataStore = { logoutLegacySession: async () => { calls.push(['logoutLegacySession']); }, ...(overrides.dataStore || {
     getCurrentUser: async () => { calls.push(['getCurrentUser']); return { id: 'u1' }; },
     loadServerData: async () => { calls.push(['loadServerData']); return { places: ['p'], collections: ['c'] }; },
-    logout: async () => { calls.push(['logout']); }
-  };
+    logout: async () => { calls.push(['logout']); },
+  }) };
   const loaded = load();
   const onAuthenticated = overrides.onAuthenticated || ((...args) => { calls.push(['onAuthenticated', ...args]); if (sequence) sequence.push('onAuthenticated'); authenticated.push(args); });
   const controller = loaded.api.create({ supabaseAuth, dataStore, onChange: snapshot => changes.push(snapshot), onAuthenticated });
@@ -44,6 +44,84 @@ async function assertLinkPendingGuard() { let resolveLogin; const counters = { l
 async function assertLinkErrorMappings() { const loginFailureCodes = new Set(['invalid_credentials', 'reauthentication_failed']); const linkErrorMessages = { invalid_credentials: '기존 계정의 이메일 또는 비밀번호를 확인해 주세요.', reauthentication_failed: '기존 계정의 이메일 또는 비밀번호를 확인해 주세요.', auth_link_conflict: '계정을 연결할 수 없습니다. 인증을 종료한 뒤 다시 시도해 주세요.', auth_identity_conflict: '계정을 연결할 수 없습니다. 인증을 종료한 뒤 다시 시도해 주세요.', bearer_required: 'Google 인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.', invalid_authorization: 'Google 인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.', invalid_token: 'Google 인증이 만료되었습니다. 인증을 종료한 뒤 다시 시도해 주세요.', auth_link_unavailable: '계정 연결을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.', validation_error: '입력값을 확인해 주세요.', unknown_error: '계정을 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.' }; const errorShapes = [code => ({ payload: { error: code }, message: 'RAW_ERROR_SENTINEL' }), code => ({ error: code, message: 'RAW_ERROR_SENTINEL' }), code => ({ code, message: 'RAW_ERROR_SENTINEL' })]; let executedCases = 0; for (const [code, expected] of Object.entries(linkErrorMessages)) for (const shape of errorShapes) { const sequence = []; const counters = { login: 0, linkSupabaseAccount: 0, getCurrentUser: 0, loadServerData: 0, onAuthenticated: 0 }; const error = shape(code); const loginFailure = loginFailureCodes.has(code); const t = setup({ dataStore: { login: async () => { counters.login += 1; sequence.push('login'); if (loginFailure) throw error; }, linkSupabaseAccount: async () => { counters.linkSupabaseAccount += 1; sequence.push('linkSupabaseAccount'); if (!loginFailure) throw error; }, getCurrentUser: async () => { counters.getCurrentUser += 1; sequence.push('getCurrentUser'); return { id: 'unexpected-user' }; }, loadServerData: async () => { counters.loadServerData += 1; sequence.push('loadServerData'); return { places: ['unexpected-place'], collections: ['unexpected-collection'] }; } }, onAuthenticated: () => { counters.onAuthenticated += 1; sequence.push('onAuthenticated'); } }); t.controller.handleInitialIssue('auth_user_not_linked'); assert.equal(t.controller.getState().mode, 'otp-unlinked'); assert.equal(t.controller.getState().issue, 'auth_user_not_linked'); await t.controller.linkExistingAccount('existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3'); const state = t.controller.getState(); const expectedCounters = loginFailure ? { login: 1, linkSupabaseAccount: 0, getCurrentUser: 0, loadServerData: 0, onAuthenticated: 0 } : { login: 1, linkSupabaseAccount: 1, getCurrentUser: 0, loadServerData: 0, onAuthenticated: 0 }; assert.deepEqual(counters, expectedCounters); assert.equal(state.error, expected); const conflict = code === 'auth_link_conflict' || code === 'auth_identity_conflict'; assert.equal(state.mode, conflict ? 'otp-conflict' : 'otp-unlinked'); assert.equal(state.issue, conflict ? code : ''); assert.deepEqual(sequence, loginFailure ? ['login'] : ['login', 'linkSupabaseAccount']); assert.equal(state.pending, false); assert.equal(JSON.stringify(state).includes('RAW_ERROR_SENTINEL'), false); assertNoLinkSensitiveData(state, t.changes); executedCases += 1; } assert.equal(executedCases, 10 * 3); for (const stage of ['getCurrentUser', 'loadServerData']) { const sequence = []; const counters = { login: 0, linkSupabaseAccount: 0, getCurrentUser: 0, loadServerData: 0, onAuthenticated: 0 }; const t = setup({ dataStore: { login: async () => { counters.login += 1; sequence.push('login'); }, linkSupabaseAccount: async () => { counters.linkSupabaseAccount += 1; sequence.push('linkSupabaseAccount'); }, getCurrentUser: async () => { counters.getCurrentUser += 1; sequence.push('getCurrentUser'); if (stage === 'getCurrentUser') throw new Error('getCurrentUser failure sentinel'); return { id: 'unexpected-user' }; }, loadServerData: async () => { counters.loadServerData += 1; sequence.push('loadServerData'); if (stage === 'loadServerData') throw new Error('loadServerData failure sentinel'); return { places: ['unexpected-place'], collections: ['unexpected-collection'] }; } }, onAuthenticated: () => { counters.onAuthenticated += 1; sequence.push('onAuthenticated'); } }); t.controller.handleInitialIssue('auth_user_not_linked'); assert.equal(t.controller.getState().mode, 'otp-unlinked'); assert.equal(t.controller.getState().issue, 'auth_user_not_linked'); await t.controller.linkExistingAccount('existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3'); assert.deepEqual(sequence, stage === 'getCurrentUser' ? ['login', 'linkSupabaseAccount', 'getCurrentUser'] : ['login', 'linkSupabaseAccount', 'getCurrentUser', 'loadServerData']); assert.deepEqual(counters, stage === 'getCurrentUser' ? { login: 1, linkSupabaseAccount: 1, getCurrentUser: 1, loadServerData: 0, onAuthenticated: 0 } : { login: 1, linkSupabaseAccount: 1, getCurrentUser: 1, loadServerData: 1, onAuthenticated: 0 }); assert.equal(t.controller.getState().error, '계정을 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.'); assert.equal(t.controller.getState().pending, false); assert.equal(t.controller.getState().mode, 'otp-unlinked'); assert.equal(t.controller.getState().issue, ''); assertNoLinkSensitiveData(t.controller.getState(), t.changes, [stage + ' failure sentinel']); } }
 async function assertInitialAndLinkConflictDiffer() { const initial = setup(); initial.controller.handleInitialIssue('auth_identity_conflict'); assertNoLinkSensitiveData(initial.controller.getState(), initial.changes); assert.equal(initial.controller.getState().mode, 'otp-conflict'); assert.equal(initial.controller.getState().issue, 'auth_identity_conflict'); assert.equal(initial.controller.getState().error, '현재 비밀번호 로그인과 다른 인증 계정입니다. 인증을 종료한 뒤 다시 시도해 주세요.'); const linked = setup({ dataStore: { login: async () => {}, linkSupabaseAccount: async () => { throw { code: 'auth_identity_conflict', message: 'RAW_ERROR_SENTINEL' }; } } }); linked.controller.handleInitialIssue('auth_user_not_linked'); assert.equal(linked.controller.getState().issue, 'auth_user_not_linked'); await linked.controller.linkExistingAccount('existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3'); assert.equal(linked.controller.getState().mode, 'otp-conflict'); assert.equal(linked.controller.getState().issue, 'auth_identity_conflict'); assert.equal(linked.controller.getState().error, '계정을 연결할 수 없습니다. 인증을 종료한 뒤 다시 시도해 주세요.'); assert.notEqual(initial.controller.getState().error, linked.controller.getState().error); assertNoLinkSensitiveData(linked.controller.getState(), linked.changes); }
 async function assertLinkStaticContract() { const source = fs.readFileSync('apps/web-prototype/auth-controller.js', 'utf8'); assert.equal((source.match(/async function linkExistingAccount\s*\(/g) || []).length, 1); assert.equal((source.match(/계정을 연결할 수 없습니다\. 인증을 종료한 뒤 다시 시도해 주세요\./g) || []).length, 2); assert.equal((source.match(/계정을 연결하지 못했습니다\. 잠시 후 다시 시도해 주세요\./g) || []).length, 1); assert.equal((source.match(/현재 비밀번호 로그인과 다른 인증 계정입니다\. 인증을 종료한 뒤 다시 시도해 주세요\./g) || []).length, 1); assert.equal((source.match(/계정 연결에 실패했습니다|계정이 이미 연결되어 있습니다|계정 연결을 완료하지 못했습니다|controllerHelper|unusedAccountAction|unusedLinkExistingAccount|linkExistingAccountPrecise/g) || []).length, 0); }
+
+async function assertLegacyCleanupByFailureStage() {
+  const runCase = async stage => {
+    const sequence = [];
+    const counters = { login: 0, linkSupabaseAccount: 0, getCurrentUser: 0, loadServerData: 0, logoutLegacySession: 0, onAuthenticated: 0 };
+    const cleanupStates = [];
+    const t = setup({ sequence, dataStore: {
+      login: async () => { counters.login += 1; sequence.push('login'); if (stage === 'login failure') throw { code: 'invalid_credentials', message: 'LOGIN_RAW_SENTINEL' }; },
+      linkSupabaseAccount: async () => { counters.linkSupabaseAccount += 1; sequence.push('linkSupabaseAccount'); if (stage === 'linkSupabaseAccount failure') throw new Error('link failure raw'); },
+      getCurrentUser: async () => { counters.getCurrentUser += 1; sequence.push('getCurrentUser'); if (stage === 'getCurrentUser failure') throw new Error('current user raw'); return { id: 'u' }; },
+      loadServerData: async () => { counters.loadServerData += 1; sequence.push('loadServerData'); if (stage === 'loadServerData failure') throw new Error('server data raw'); return { places: [], collections: [] }; },
+      logoutLegacySession: async () => { cleanupStates.push({ pending: t.controller.getState().pending, error: t.controller.getState().error }); counters.logoutLegacySession += 1; sequence.push('logoutLegacySession'); }
+    }, onAuthenticated: () => { counters.onAuthenticated += 1; sequence.push('onAuthenticated'); } });
+    t.controller.handleInitialIssue('auth_user_not_linked');
+    await t.controller.linkExistingAccount('existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3');
+    const state = t.controller.getState();
+    assert.equal(state.mode, 'otp-unlinked');
+    assert.equal(state.pending, false);
+    assert.equal(state.issue, '');
+    assert.equal(state.error, stage === 'login failure' ? '기존 계정의 이메일 또는 비밀번호를 확인해 주세요.' : '계정을 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    assertNoLinkSensitiveData(state, t.changes, ['existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3', ...(stage === 'login failure' ? ['LOGIN_RAW_SENTINEL'] : [stage === 'linkSupabaseAccount failure' ? 'link failure raw' : stage === 'getCurrentUser failure' ? 'current user raw' : 'server data raw'])]);
+    const expectedSequence = stage === 'login failure' ? ['login'] : stage === 'linkSupabaseAccount failure' ? ['login', 'linkSupabaseAccount', 'logoutLegacySession'] : stage === 'getCurrentUser failure' ? ['login', 'linkSupabaseAccount', 'getCurrentUser', 'logoutLegacySession'] : ['login', 'linkSupabaseAccount', 'getCurrentUser', 'loadServerData', 'logoutLegacySession'];
+    const expectedCounters = { login: 1, linkSupabaseAccount: stage === 'login failure' ? 0 : 1, getCurrentUser: stage === 'getCurrentUser failure' || stage === 'loadServerData failure' ? 1 : 0, loadServerData: stage === 'loadServerData failure' ? 1 : 0, logoutLegacySession: stage === 'login failure' ? 0 : 1, onAuthenticated: 0 };
+    assert.deepEqual(sequence, expectedSequence); assert.deepEqual(counters, expectedCounters);
+    if (stage !== 'login failure') assert.deepEqual(cleanupStates, [{ pending: true, error: '' }]);
+    assert.equal(counters.logoutLegacySession, stage === 'login failure' ? 0 : 1);
+    assert.equal(t.controller.getState().pending, false);
+    assert.equal(t.controller.getState().issue, '');
+    assert.equal(t.authenticated.length, 0);
+    assertNoLinkSensitiveData(t.controller.getState(), t.changes, ['link failure raw', 'current user raw', 'server data raw']);
+  };
+  await runCase('login failure');
+  await runCase('linkSupabaseAccount failure');
+  await runCase('getCurrentUser failure');
+  await runCase('loadServerData failure');
+
+}
+
+async function assertCleanupFailureCancelRetry() {
+  let cleanupCalls = 0; let signOutCalls = 0; let authenticatedCalls = 0; const sequence = [];
+  const t = setup({ sequence, onAuthenticated: () => { authenticatedCalls += 1; sequence.push('onAuthenticated'); }, dataStore: { login: async () => { sequence.push('login'); }, linkSupabaseAccount: async () => { sequence.push('linkSupabaseAccount'); throw new Error('LINK_RAW_SENTINEL'); }, logoutLegacySession: async () => { cleanupCalls += 1; sequence.push('logoutLegacySession'); if (cleanupCalls === 1) throw new Error('CLEANUP_RAW_SENTINEL'); } }, supabaseAuth: { signOut: async () => { signOutCalls += 1; sequence.push('signOut'); } } });
+  t.controller.handleInitialIssue('auth_user_not_linked'); await t.controller.linkExistingAccount('existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3');
+  assert.equal(authenticatedCalls, 0); assert.equal(t.authenticated.length, 0);
+  assert.equal(cleanupCalls, 1); assert.equal(signOutCalls, 0); assert.equal(t.controller.getState().pending, false); assert.equal(t.controller.getState().mode, 'otp-unlinked'); assert.equal(t.controller.getState().issue, ''); assert.equal(t.controller.getState().error, '인증을 종료하지 못했습니다. 잠시 후 다시 시도해 주세요.'); assertNoLinkSensitiveData(t.controller.getState(), t.changes, ['LINK_RAW_SENTINEL', 'CLEANUP_RAW_SENTINEL']);
+  await t.controller.cancelOtp(); assert.equal(cleanupCalls, 2); assert.equal(signOutCalls, 1); assert.equal(authenticatedCalls, 0); assert.equal(t.authenticated.length, 0); assert.deepEqual(sequence, ['login', 'linkSupabaseAccount', 'logoutLegacySession', 'logoutLegacySession', 'signOut']); assert.deepEqual(plain(t.controller.getState()), { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' });
+}
+
+async function assertPartialCancelFailureLifecycle() {
+  let cleanupCalls = 0; let signOutCalls = 0; const sequence = []; const counters = { login: 0, linkSupabaseAccount: 0, logoutLegacySession: 0, signOut: 0, onAuthenticated: 0 };
+  const t = setup({ sequence, onAuthenticated: () => { counters.onAuthenticated += 1; sequence.push('onAuthenticated'); }, dataStore: { login: async () => { counters.login += 1; sequence.push('login'); }, linkSupabaseAccount: async () => { counters.linkSupabaseAccount += 1; sequence.push('linkSupabaseAccount'); throw new Error('LINK_RAW_SENTINEL'); }, logoutLegacySession: async () => { counters.logoutLegacySession += 1; sequence.push('logoutLegacySession'); cleanupCalls += 1; if (cleanupCalls === 1) throw new Error('CLEANUP_RAW_SENTINEL'); } }, supabaseAuth: { signOut: async () => { counters.signOut += 1; sequence.push('signOut'); signOutCalls += 1; if (signOutCalls === 1) throw new Error('SIGNOUT_RAW_SENTINEL'); } } });
+  t.controller.handleInitialIssue('auth_user_not_linked');
+  await t.controller.linkExistingAccount('existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3');
+  assert.equal(cleanupCalls, 1); assert.equal(signOutCalls, 0); assert.equal(counters.onAuthenticated, 0);
+  await t.controller.cancelOtp();
+  const firstCancelState = t.controller.getState();
+  assert.equal(cleanupCalls, 2); assert.equal(signOutCalls, 1); assert.equal(counters.logoutLegacySession, 2); assert.equal(counters.signOut, 1); assert.equal(counters.onAuthenticated, 0);
+  assert.equal(firstCancelState.mode, 'otp-unlinked'); assert.equal(firstCancelState.pending, false); assert.equal(firstCancelState.issue, ''); assert.equal(firstCancelState.error, '인증을 종료하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+  assertNoLinkSensitiveData(firstCancelState, t.changes, ['existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3', 'LINK_RAW_SENTINEL', 'CLEANUP_RAW_SENTINEL', 'SIGNOUT_RAW_SENTINEL']);
+  await t.controller.cancelOtp();
+  assert.equal(cleanupCalls, 2); assert.equal(signOutCalls, 2); assert.equal(counters.logoutLegacySession, 2); assert.equal(counters.signOut, 2); assert.equal(counters.onAuthenticated, 0);
+  assert.deepEqual(plain(t.controller.getState()), { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' });
+  const expectedSequence = ['login', 'linkSupabaseAccount', 'logoutLegacySession', 'logoutLegacySession', 'signOut', 'signOut'];
+  const expectedCounters = { login: 1, linkSupabaseAccount: 1, logoutLegacySession: 2, signOut: 2, onAuthenticated: 0 };
+  assert.deepEqual(sequence, expectedSequence);
+  assert.deepEqual(counters, expectedCounters);
+}
+
+async function assertSuccessfulLinkClearsCleanupFlag() {
+  let cleanupCalls = 0; let signOutCalls = 0; let callbackState = null; const sequence = []; const counters = { login: 0, linkSupabaseAccount: 0, getCurrentUser: 0, loadServerData: 0, logoutLegacySession: 0, onAuthenticated: 0, signOut: 0 };
+  const t = setup({ sequence, onAuthenticated: () => { counters.onAuthenticated += 1; sequence.push('onAuthenticated'); callbackState = t.controller.getState(); }, dataStore: { login: async () => { counters.login += 1; sequence.push('login'); }, linkSupabaseAccount: async () => { counters.linkSupabaseAccount += 1; sequence.push('linkSupabaseAccount'); }, getCurrentUser: async () => { counters.getCurrentUser += 1; sequence.push('getCurrentUser'); return { id: 'u' }; }, loadServerData: async () => { counters.loadServerData += 1; sequence.push('loadServerData'); return { places: [], collections: [] }; }, logoutLegacySession: async () => { counters.logoutLegacySession += 1; cleanupCalls += 1; } }, supabaseAuth: { signOut: async () => { counters.signOut += 1; signOutCalls += 1; } } });
+  t.controller.handleInitialIssue('auth_user_not_linked'); await t.controller.linkExistingAccount('existing@example.com', 'PASSWORD_SECRET_SENTINEL_5_3'); const expectedSequence = ['login', 'linkSupabaseAccount', 'getCurrentUser', 'loadServerData', 'onAuthenticated']; const expectedCounters = { login: 1, linkSupabaseAccount: 1, getCurrentUser: 1, loadServerData: 1, logoutLegacySession: 0, onAuthenticated: 1, signOut: 0 }; assert.deepEqual(sequence, expectedSequence); assert.deepEqual(counters, expectedCounters); assert.equal(cleanupCalls, 0); assert.equal(callbackState.pending, false); assert.equal(callbackState.issue, ''); await t.controller.cancelOtp(); assert.equal(cleanupCalls, 0); assert.equal(signOutCalls, 1); assert.equal(t.controller.getState().mode, 'login');
+  assert.deepEqual(plain(t.controller.getState()), { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' });
+}
+
+async function assertOrdinaryCancelSkipsLegacyCleanup() {
+  let cleanupCalls = 0; let signOutCalls = 0; const t = setup({ dataStore: { logoutLegacySession: async () => { cleanupCalls += 1; } }, supabaseAuth: { signOut: async () => { signOutCalls += 1; } } });
+  t.controller.setMode('otp-verify'); await t.controller.cancelOtp(); assert.equal(cleanupCalls, 0); assert.equal(signOutCalls, 1); assert.deepEqual(plain(t.controller.getState()), { mode: 'login', otpEmail: '', notice: '', error: '', pending: false, issue: '' });
+}
 
 async function run() {
   let t = setup();
@@ -99,6 +177,11 @@ async function run() {
   await assertLinkSuccessSequence();
   await assertLinkPendingGuard();
   await assertLinkErrorMappings();
+  await assertLegacyCleanupByFailureStage();
+  await assertCleanupFailureCancelRetry();
+  await assertPartialCancelFailureLifecycle();
+  await assertSuccessfulLinkClearsCleanupFlag();
+  await assertOrdinaryCancelSkipsLegacyCleanup();
 
   await assertInitialAndLinkConflictDiffer();
   await assertLinkStaticContract();
