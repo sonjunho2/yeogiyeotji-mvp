@@ -1,0 +1,138 @@
+.map-screen .app-header > div {
+  width: 100%;
+}
+
+.map-screen #profileButton,
+.map-screen .storage-status {
+  display: none;
+}
+
+.map-screen .search-box input {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.map-screen .search-box input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.map-screen .chips {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.map-screen .map-view .chip {
+  min-width: 62px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 500;
+}
+
+.map-screen .map-view .chip:first-child {
+  min-width: 58px;
+}
+
+.map-screen .map-view .chip.active {
+  font-weight: 700;
+}
+
+.map-screen .leaflet-control-zoom {
+  display: none;
+}
+
+.map-screen .leaflet-control-attribution {
+  opacity: .72;
+}
+
+.map-screen .map-selected-overlay .place-card {
+  box-shadow: 0 8px 22px rgba(24, 71, 61, .08);
+}
+
+.map-screen .map-selected-overlay .place-card > div {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.map-screen .map-selected-overlay .place-card h3 {
+  margin: 3px 0 5px;
+  font-size: 17px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-screen .map-selected-overlay .place-card p {
+  margin: 4px 0;
+  line-height: 1.35;
+}
+
+.map-screen .map-selected-overlay .place-card p:nth-of-type(2) {
+  color: var(--text);
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.map-screen .map-selected-overlay .place-card .tags {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-screen .map-selected-overlay .thumb:not([style]) {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.map-screen .map-selected-overlay .thumb:not([style])::after {
+  content: '사진';
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.bottom-nav {
+  font-family: "Noto Sans KR", Inter, system-ui, sans-serif;
+}
+
+.nav-item {
+  grid-template-rows: 28px 14px;
+  align-content: center;
+  row-gap: 2px;
+  padding: 0;
+}
+
+.nav-item span {
+  display: grid;
+  place-items: center;
+  font-size: 23px;
+}
+
+.nav-item small {
+  line-height: 14px;
+}
+
+.nav-item.add {
+  grid-template-rows: 50px 12px;
+  align-content: start;
+  row-gap: 1px;
+  padding-top: 8px;
+}
+
+.nav-item.add span {
+  margin-top: 0;
+  box-shadow: none;
+}
+
+.nav-item.add small {
+  line-height: 12px;
+}
