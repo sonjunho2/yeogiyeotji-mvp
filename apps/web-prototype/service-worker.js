@@ -1,4 +1,5 @@
-const CACHE = 'yeogiyeotji-v10';
+// Previous cache version: yeogiyeotji-v10.
+const CACHE = 'yeogiyeotji-v11';
 const ASSETS = ['./', './index.html', './styles.css', './supabase-auth.js', './data-store.js', './auth-controller.js', './app.js', './manifest.json'];
 
 self.addEventListener('install', event => {

@@ -84,6 +84,7 @@ function handleAuthenticationError(error) {
 }
 
 function renderAuth() {
+  document.body.classList.remove('map-screen');
   const mode = authViewState.mode;
   if (mode === 'otp-request' || mode === 'otp-verify') return renderOtpAuth();
   if (mode === 'otp-unlinked' || mode === 'otp-conflict') return renderOtpIssue();
@@ -608,6 +609,11 @@ $('#collectionForm').onsubmit = async event => {
 };
 
 function render() {
+  if (state.tab === 'map') {
+    document.body.classList.add('map-screen');
+  } else {
+    document.body.classList.remove('map-screen');
+  }
   ({ map: renderMap, memories: renderMemories, add: renderAdd, collections: renderCollections }[state.tab] || renderMap)();
 }
 
