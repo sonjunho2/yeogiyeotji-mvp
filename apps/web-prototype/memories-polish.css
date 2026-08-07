@@ -1,0 +1,148 @@
+body:has(.memories-view) .app-header > div {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+body:has(.memories-view) .app-header h1 {
+  order: 1;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+body:has(.memories-view) .app-header .eyebrow {
+  order: 2;
+  margin: 3px 0 0;
+  font-size: 13px;
+}
+
+body:has(.memories-view) #profileButton,
+body:has(.memories-view) .storage-status {
+  display: none;
+}
+
+.memories-view {
+  font-family: "Noto Sans KR", Inter, system-ui, sans-serif;
+}
+
+.memories-view > .chips {
+  gap: 8px;
+  padding: 14px 0 16px;
+}
+
+.memories-view > .chips .chip {
+  height: 34px;
+  min-width: 58px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.memories-view > .chips .chip:first-child {
+  min-width: 72px;
+  font-weight: 700;
+}
+
+.memories-view .memory-list {
+  display: grid;
+  gap: 34px;
+}
+
+.memories-view .month-label {
+  margin: 2px 2px -14px;
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.memories-view .memory-card {
+  min-height: 126px;
+  display: grid;
+  grid-template-columns: 126px minmax(0, 1fr);
+  gap: 16px;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+}
+
+.memories-view .memory-card .thumb {
+  width: 126px;
+  height: 126px;
+  border-radius: 18px;
+}
+
+.memories-view .memory-card .thumb:not([style]) {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.memories-view .memory-card .thumb:not([style])::after {
+  content: '사진';
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.memories-view .memory-card > div {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.memories-view .memory-card h3 {
+  margin: 3px 0 7px;
+  font-size: 17px;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.memories-view .memory-card p {
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
+.memories-view .memory-card p:first-of-type {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.memories-view .memory-card p:nth-of-type(2) {
+  font-size: 13px;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.memories-view .memory-card .tags {
+  margin-top: 14px;
+  margin-bottom: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 500;
+  color: var(--primary) !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 370px) {
+  .memories-view .memory-card {
+    grid-template-columns: 112px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .memories-view .memory-card .thumb {
+    width: 112px;
+    height: 112px;
+  }
+}
