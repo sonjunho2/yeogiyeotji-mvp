@@ -1,5 +1,5 @@
-// Previous cache version: yeogiyeotji-v14.
-const CACHE = 'yeogiyeotji-v15';
+// Previous cache version: yeogiyeotji-v15.
+const CACHE = 'yeogiyeotji-v16';
 const ASSETS = ['./', './index.html', './styles.css', './map-polish.css', './memories-polish.css', './add-polish.css', './supabase-auth.js', './data-store.js', './auth-controller.js', './app.js', './add-flow.js', './manifest.json'];
 
 self.addEventListener('install', event => {
