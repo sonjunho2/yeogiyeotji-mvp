@@ -56,36 +56,36 @@
     $('#photoNextButton').onclick = () => showAddStep(2);
   }
 
-  function setLocationCard(lat, lng) {
+  function setLocationCard(lat, lng, label = '선택 위치') {
     const title = $('#selectedLocationTitle');
     const detail = $('#selectedLocationDetail');
     const continueButton = $('#locationContinueButton');
     if (!title || !detail || !continueButton) return;
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       title.textContent = '지도에서 위치를 선택하세요';
-      detail.textContent = '원하는 지점을 누르면 위치가 저장됩니다.';
+      detail.textContent = '현재 위치 버튼을 누르거나 원하는 지점을 직접 선택하세요.';
       continueButton.disabled = true;
       return;
     }
-    title.textContent = '선택 위치';
+    title.textContent = label;
     detail.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
     continueButton.disabled = false;
   }
 
   function renderLocationStep() {
-    view.innerHTML = `<section class="add-view add-step add-step-location">${addFlowHeader('위치 확인', '2 / 3 · 촬영 장소를 확인하세요', 'addBackButton')}<div class="add-location-map" id="locationPickerMap" aria-label="장소 위치 선택 지도"></div><div class="selected-location-card"><small>현재 선택된 장소</small><h3 id="selectedLocationTitle"></h3><p id="selectedLocationDetail"></p><button class="location-search-button" id="locationSearchButton" type="button">⌕ 다른 장소 검색</button></div><button class="primary add-location-continue" id="locationContinueButton" type="button">이 위치로 계속</button></section>`;
+    view.innerHTML = `<section class="add-view add-step add-step-location">${addFlowHeader('위치 확인', '2 / 3 · 촬영 장소를 확인하세요', 'addBackButton')}<div class="add-location-map-wrap"><div class="add-location-map" id="locationPickerMap" aria-label="장소 위치 선택 지도"></div><button class="current-location-button" id="currentLocationButton" type="button">⌖ 현재 위치</button></div><div class="selected-location-card"><small>현재 선택된 장소</small><h3 id="selectedLocationTitle"></h3><p id="selectedLocationDetail"></p><button class="location-search-button" id="locationSearchButton" type="button">⌕ 다른 장소 검색</button></div><button class="primary add-location-continue" id="locationContinueButton" type="button">이 위치로 계속</button></section>`;
 
     $('#addBackButton').onclick = () => showAddStep(1);
     const initialLat = Number.isFinite(state.pendingLat) ? state.pendingLat : 37.5665;
     const initialLng = Number.isFinite(state.pendingLng) ? state.pendingLng : 126.9780;
     let marker = null;
-    const applyLocation = (lat, lng, pan = false) => {
+    const applyLocation = (lat, lng, pan = false, label = '선택 위치') => {
       state.pendingLat = Number(lat);
       state.pendingLng = Number(lng);
       if (marker) marker.setLatLng([state.pendingLat, state.pendingLng]);
       else marker = L.circleMarker([state.pendingLat, state.pendingLng], { radius: 10, color: '#ffffff', weight: 3, fillColor: '#1f6a5b', fillOpacity: 1 }).addTo(state.pickerMap);
       if (pan) state.pickerMap.setView([state.pendingLat, state.pendingLng], 16);
-      setLocationCard(state.pendingLat, state.pendingLng);
+      setLocationCard(state.pendingLat, state.pendingLng, label);
     };
 
     if (typeof L !== 'undefined') {
@@ -93,21 +93,35 @@
       addTileLayer(state.pickerMap);
       if (Number.isFinite(state.pendingLat) && Number.isFinite(state.pendingLng)) applyLocation(state.pendingLat, state.pendingLng, false);
       else setLocationCard(NaN, NaN);
-      state.pickerMap.on('click', event => applyLocation(event.latlng.lat, event.latlng.lng, false));
+      state.pickerMap.on('click', event => applyLocation(event.latlng.lat, event.latlng.lng, false, '선택 위치'));
     } else {
       $('#locationPickerMap').innerHTML = '<div class="map-error">지도를 불러오지 못했습니다.</div>';
       setLocationCard(NaN, NaN);
     }
 
-    $('#locationSearchButton').onclick = () => {
+    $('#currentLocationButton').onclick = () => {
+      const button = $('#currentLocationButton');
       if (!navigator.geolocation) {
-        toast('지도를 눌러 원하는 위치를 선택해 주세요.');
+        toast('이 기기에서는 현재 위치를 사용할 수 없습니다.');
         return;
       }
+      button.disabled = true;
+      button.textContent = '위치 확인 중…';
       navigator.geolocation.getCurrentPosition(position => {
-        applyLocation(position.coords.latitude, position.coords.longitude, true);
-        toast('현재 위치를 선택했습니다.');
-      }, () => toast('지도를 눌러 원하는 위치를 선택해 주세요.'), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+        applyLocation(position.coords.latitude, position.coords.longitude, true, '현재 위치');
+        toast('현재 위치를 지도에 표시했습니다.');
+        button.disabled = false;
+        button.textContent = '⌖ 현재 위치';
+      }, error => {
+        const denied = error?.code === 1;
+        toast(denied ? '위치 권한을 허용해 주세요.' : '현재 위치를 확인하지 못했습니다. 다시 시도해 주세요.');
+        button.disabled = false;
+        button.textContent = '⌖ 현재 위치';
+      }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+    };
+
+    $('#locationSearchButton').onclick = () => {
+      toast('장소 검색 기능은 이후 기능 단계에서 추가합니다. 현재 위치 버튼이나 지도를 이용해 주세요.');
     };
     $('#locationContinueButton').onclick = () => showAddStep(3);
   }
