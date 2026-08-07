@@ -53,16 +53,18 @@
     <section class="map-view">
       <label class="search-box"><span>⌕</span><input id="mapSearch" placeholder="장소, 메모, 태그 검색" /></label>
       <div class="chips" id="mapChips"></div>
-      <div class="map-toolbar">
-        <button class="location-button compact-button" type="button" id="locateMapButton">⌖ 내 위치</button>
-        <span id="mapStatus">지도를 누르면 새 장소 위치를 선택할 수 있습니다.</span>
+      <div class="map-stage">
+        <div class="real-map" id="realMap" aria-label="저장한 장소 지도"></div>
+        <div class="map-toolbar">
+          <button class="location-button compact-button" type="button" id="locateMapButton">⌖ 내 위치</button>
+          <span id="mapStatus">지도를 누르면 새 장소 위치를 선택할 수 있습니다.</span>
+        </div>
+        <div class="map-location-panel" id="mapLocationPanel" hidden>
+          <div><b>선택한 위치</b><small id="mapLocationText"></small></div>
+          <button class="primary compact-button" type="button" id="saveMapLocationButton">이 위치 저장</button>
+        </div>
+        <div class="map-selected-overlay" id="mapSelectedCard"></div>
       </div>
-      <div class="real-map" id="realMap" aria-label="저장한 장소 지도"></div>
-      <div class="map-location-panel" id="mapLocationPanel" hidden>
-        <div><b>선택한 위치</b><small id="mapLocationText"></small></div>
-        <button class="primary compact-button" type="button" id="saveMapLocationButton">이 위치 저장</button>
-      </div>
-      <div id="mapSelectedCard"></div>
     </section>
   </template>
 
