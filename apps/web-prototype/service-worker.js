@@ -1,6 +1,6 @@
-// Previous cache version: yeogiyeotji-v13.
-const CACHE = 'yeogiyeotji-v14';
-const ASSETS = ['./', './index.html', './styles.css', './map-polish.css', './memories-polish.css', './add-polish.css', './supabase-auth.js', './data-store.js', './auth-controller.js', './app.js', './manifest.json'];
+// Previous cache version: yeogiyeotji-v14.
+const CACHE = 'yeogiyeotji-v15';
+const ASSETS = ['./', './index.html', './styles.css', './map-polish.css', './memories-polish.css', './add-polish.css', './supabase-auth.js', './data-store.js', './auth-controller.js', './app.js', './add-flow.js', './manifest.json'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
