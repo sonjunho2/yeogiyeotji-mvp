@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="map-polish.css" />
   <link rel="stylesheet" href="memories-polish.css" />
+  <link rel="stylesheet" href="add-polish.css" />
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -79,26 +80,47 @@
 
   <template id="addViewTemplate">
     <section class="add-view">
+      <div class="add-flow-header">
+        <button class="add-back-button" type="button" aria-label="뒤로" onclick="document.querySelector('[data-tab=map]').click()">‹</button>
+        <div>
+          <h2>장소 저장</h2>
+          <p>1 / 3 · 사진을 선택하세요</p>
+        </div>
+      </div>
       <form id="placeForm">
-        <div class="step-indicator"><span class="active"></span><span class="active"></span><span></span></div>
         <div class="upload-card" id="uploadCard">
-          <input id="photoInput" type="file" accept="image/*" capture="environment" hidden />
-          <div id="photoPreview" class="photo-preview"><b>＋</b><strong>사진 촬영 또는 앨범에서 선택</strong><small>장소를 기억할 사진을 선택하세요</small></div>
-          <button class="secondary full" type="button" id="photoButton">사진 선택</button>
+          <input id="photoInput" type="file" accept="image/*" hidden oninput="document.getElementById('photoNextButton').disabled = !this.files.length" />
+          <div id="photoPreview" class="photo-preview"><b>＋</b><strong>사진 촬영 또는 앨범에서 선택</strong><small>장소를 기억할 사진을 최대 10장까지</small></div>
         </div>
-        <label class="field"><span>장소 이름</span><input id="placeName" required maxlength="100" placeholder="예: 강릉 바다 창가 카페" /></label>
-        <div class="field inline-field"><label><span>위도</span><input id="latitude" inputmode="decimal" placeholder="37.5665" /></label><label><span>경도</span><input id="longitude" inputmode="decimal" placeholder="126.9780" /></label></div>
-        <button class="location-button" type="button" id="locationButton">⌖ 현재 위치 불러오기</button>
-        <div class="location-picker-wrap">
-          <div id="locationPickerMap" class="location-picker-map" aria-label="장소 위치 선택 지도"></div>
-          <small>지도를 움직인 뒤 원하는 지점을 누르면 위도와 경도가 입력됩니다.</small>
+        <div class="photo-action-row">
+          <button class="primary" type="button" onpointerdown="document.getElementById('photoInput').setAttribute('capture','environment')" onclick="document.getElementById('photoInput').click()">카메라 열기</button>
+          <button class="secondary" type="button" id="photoButton" onpointerdown="document.getElementById('photoInput').removeAttribute('capture')">앨범에서 선택</button>
         </div>
-        <label class="field"><span>한 줄 메모</span><textarea id="memo" rows="3" maxlength="500" placeholder="무엇이 좋았는지 기록하세요"></textarea></label>
-        <label class="field"><span>카테고리</span><select id="category"><option>카페</option><option>맛집</option><option>숙소</option><option>볼거리</option><option>쇼핑</option><option>기타</option></select></label>
-        <label class="field"><span>태그</span><input id="tags" maxlength="200" placeholder="바다전망, 다시갈곳" /></label>
-        <label class="field"><span>컬렉션</span><select id="collectionSelect"></select></label>
-        <fieldset class="privacy"><legend>공개 범위</legend><label><input name="privacy" type="radio" value="private" checked /> 🔒 나만 보기</label><label><input name="privacy" type="radio" value="link" /> 🔗 링크 공유</label></fieldset>
-        <button class="primary full" type="submit">장소 저장하기</button>
+        <div class="recent-photos" aria-label="최근 사진 미리보기">
+          <h3>최근 사진</h3>
+          <div class="recent-photo-grid" aria-hidden="true">
+            <div class="recent-photo recent-photo-a">사진</div><div class="recent-photo recent-photo-b">사진</div><div class="recent-photo recent-photo-c">사진</div>
+            <div class="recent-photo recent-photo-a">사진</div><div class="recent-photo recent-photo-b">사진</div><div class="recent-photo recent-photo-c">사진</div>
+          </div>
+        </div>
+        <button class="primary add-next-button" id="photoNextButton" type="button" disabled onclick="document.querySelector('.add-legacy-fields').scrollIntoView({ behavior: 'smooth', block: 'start' })">다음</button>
+
+        <div class="add-legacy-fields">
+          <div class="step-indicator"><span class="active"></span><span class="active"></span><span></span></div>
+          <label class="field"><span>장소 이름</span><input id="placeName" required maxlength="100" placeholder="예: 강릉 바다 창가 카페" /></label>
+          <div class="field inline-field"><label><span>위도</span><input id="latitude" inputmode="decimal" placeholder="37.5665" /></label><label><span>경도</span><input id="longitude" inputmode="decimal" placeholder="126.9780" /></label></div>
+          <button class="location-button" type="button" id="locationButton">⌖ 현재 위치 불러오기</button>
+          <div class="location-picker-wrap">
+            <div id="locationPickerMap" class="location-picker-map" aria-label="장소 위치 선택 지도"></div>
+            <small>지도를 움직인 뒤 원하는 지점을 누르면 위도와 경도가 입력됩니다.</small>
+          </div>
+          <label class="field"><span>한 줄 메모</span><textarea id="memo" rows="3" maxlength="500" placeholder="무엇이 좋았는지 기록하세요"></textarea></label>
+          <label class="field"><span>카테고리</span><select id="category"><option>카페</option><option>맛집</option><option>숙소</option><option>볼거리</option><option>쇼핑</option><option>기타</option></select></label>
+          <label class="field"><span>태그</span><input id="tags" maxlength="200" placeholder="바다전망, 다시갈곳" /></label>
+          <label class="field"><span>컬렉션</span><select id="collectionSelect"></select></label>
+          <fieldset class="privacy"><legend>공개 범위</legend><label><input name="privacy" type="radio" value="private" checked /> 🔒 나만 보기</label><label><input name="privacy" type="radio" value="link" /> 🔗 링크 공유</label></fieldset>
+          <button class="primary full" type="submit">장소 저장하기</button>
+        </div>
       </form>
     </section>
   </template>
