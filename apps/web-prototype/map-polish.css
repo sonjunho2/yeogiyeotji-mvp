@@ -46,6 +46,10 @@
   opacity: .72;
 }
 
+.map-screen .leaflet-overlay-pane path[fill="#ff8a5b"] {
+  fill: var(--primary) !important;
+}
+
 .map-screen .map-selected-overlay .place-card {
   box-shadow: 0 8px 22px rgba(24, 71, 61, .08);
 }
