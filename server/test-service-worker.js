@@ -42,7 +42,7 @@ async function runEvent(handler) {
 (async () => {
   const install = loadWorker();
   await runEvent(install.listeners.install);
-  assert.deepEqual(install.calls.opened, ['yeogiyeotji-v15']);
+  assert.deepEqual(install.calls.opened, ['yeogiyeotji-v16']);
   assert.equal(install.calls.added.length, 1);
   assert.ok(install.calls.added[0].includes('./data-store.js'));
   assert.ok(install.calls.added[0].includes('./supabase-auth.js'));
@@ -53,9 +53,9 @@ async function runEvent(handler) {
   assert.ok(install.calls.added[0].includes('./add-flow.js'));
   assert.equal(install.calls.skipWaiting, 1);
 
-  const activate = loadWorker(['yeogiyeotji-v6', 'yeogiyeotji-v7', 'yeogiyeotji-v8', 'yeogiyeotji-v9', 'yeogiyeotji-v10', 'yeogiyeotji-v11', 'yeogiyeotji-v12', 'yeogiyeotji-v13', 'yeogiyeotji-v14', 'unrelated-old-cache']);
+  const activate = loadWorker(['yeogiyeotji-v6', 'yeogiyeotji-v7', 'yeogiyeotji-v8', 'yeogiyeotji-v9', 'yeogiyeotji-v10', 'yeogiyeotji-v11', 'yeogiyeotji-v12', 'yeogiyeotji-v13', 'yeogiyeotji-v14', 'yeogiyeotji-v15', 'unrelated-old-cache']);
   await runEvent(activate.listeners.activate);
-  assert.deepEqual(activate.calls.deleted.sort(), ['unrelated-old-cache', 'yeogiyeotji-v10', 'yeogiyeotji-v11', 'yeogiyeotji-v12', 'yeogiyeotji-v13', 'yeogiyeotji-v14', 'yeogiyeotji-v6', 'yeogiyeotji-v7', 'yeogiyeotji-v8', 'yeogiyeotji-v9']);
+  assert.deepEqual(activate.calls.deleted.sort(), ['unrelated-old-cache', 'yeogiyeotji-v10', 'yeogiyeotji-v11', 'yeogiyeotji-v12', 'yeogiyeotji-v13', 'yeogiyeotji-v14', 'yeogiyeotji-v15', 'yeogiyeotji-v6', 'yeogiyeotji-v7', 'yeogiyeotji-v8', 'yeogiyeotji-v9']);
   assert.equal(activate.calls.deleted.includes('yeogiyeotji-v8'), true);
   assert.equal(activate.calls.claim, 1);
 
@@ -84,7 +84,7 @@ async function runEvent(handler) {
   assert.equal(worker.fetchCount(), 5);
   assert.strictEqual(worker.fetched.at(-1), staticRequest);
   assert.equal(worker.calls.opened.length, 1);
-  assert.equal(worker.calls.opened[0], 'yeogiyeotji-v15');
+  assert.equal(worker.calls.opened[0], 'yeogiyeotji-v16');
   assert.equal(worker.calls.puts, 1);
   assert.strictEqual(worker.calls.putRequests[0], staticRequest);
   assert.notStrictEqual(worker.calls.putResponses[0], worker.responses[4]);
@@ -136,5 +136,5 @@ async function runEvent(handler) {
   assert.equal(failedApiWorker.calls.cacheMatched, 0);
   assert.equal(failedApiWorker.calls.puts, 0);
 
-  console.log('Service worker tests passed: v15 assets, stale cache cleanup, and fetch exclusions');
+  console.log('Service worker tests passed: v16 assets, stale cache cleanup, and fetch exclusions');
 })().catch(error => { console.error(`Service worker tests failed: ${error.message}`); process.exitCode = 1; });
